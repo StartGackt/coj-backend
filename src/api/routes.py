@@ -95,6 +95,7 @@ def search(q: str = Query(..., min_length=1), case_id: Optional[str] = None, k: 
     """Search documents and graph"""
     case_id = case_id or latest_case_id()
     docs, facts = hybrid_search(q, case_id=case_id, k=k)
+    
     return {"query": q, "case_id": case_id, "top_docs": docs, "facts": facts}
 
 
@@ -186,59 +187,66 @@ def fuzzy_match(query: str, text: str) -> float:
 def search_court_documents(
     q: str = Query(..., min_length=1, description="Search query"),
     case_id: Optional[str] = None,
+    texts: Optional[List[str]] = None,
     k: int = 5,
 ):
     """Suggest court document template using hybrid KG search with fuzzy fallback"""
     cid = case_id or latest_case_id()
 
-    # Query documents and graph facts via hybrid search
-    doc_hits, facts = hybrid_search(q, case_id=cid, k=k)
+    try:
+        # Try hybrid search with Neo4j first
+        doc_hits, facts = hybrid_search(q, case_id=cid, k=k)
 
-    # Aggregate context
-    pool_parts: List[str] = [q]
-    pool_parts.extend([d.get("text", "") for d in doc_hits])
-    for f in facts:
-        pool_parts.append(str(f.get("person", "")))
-        pool_parts.append(str(f.get("role", "")))
-        pool_parts.append(str(f.get("amount", "")))
-        pool_parts.append(str(f.get("date", "")))
-    pool = " ".join(pool_parts).lower()
+        # Aggregate context
+        pool_parts: List[str] = [q]
+        pool_parts.extend([d.get("text", "") for d in doc_hits])
+        for f in facts:
+            pool_parts.append(str(f.get("person", "")))
+            pool_parts.append(str(f.get("role", "")))
+            pool_parts.append(str(f.get("amount", "")))
+            pool_parts.append(str(f.get("date", "")))
+        pool = " ".join(pool_parts).lower()
 
-    suggestions: List[Dict] = []
+        suggestions: List[Dict] = []
 
-    # Heuristic mapping from query+facts to document templates
-    if any(kw in pool for kw in ["เลิกจ้างไม่เป็นธรรม", "เลิกจ้าง", "ไม่เป็นธรรม"]):
-        suggestions.append({
-            "id": 1,
-            "title": "คำฟ้องคดีแรงงาน รง1",
-            "description": "คำฟ้องคดีแรงงาน เลิกจ้างไม่เป็นธรรม",
-            "keywords": ["คดีแรงงาน", "เลิกจ้าง", "ไม่เป็นธรรม", "คำฟ้อง", "รง1"],
-            "court": "ศาลแรงงานกลาง",
-            "score": max([d.get("score", 0.0) for d in doc_hits] or [0.8]),
-        })
+        # Heuristic mapping from query+facts to document templates
+        if any(kw in pool for kw in ["เลิกจ้างไม่เป็นธรรม", "เลิกจ้าง", "ไม่เป็นธรรม"]):
+            suggestions.append({
+                "id": 1,
+                "title": "คำฟ้องคดีแรงงาน รง1",
+                "description": "คำฟ้องคดีแรงงาน เลิกจ้างไม่เป็นธรรม",
+                "keywords": ["คดีแรงงาน", "เลิกจ้าง", "ไม่เป็นธรรม", "คำฟ้อง", "รง1"],
+                "court": "ศาลแรงงานกลาง",
+                "score": max([d.get("score", 0.0) for d in doc_hits] or [0.8]),
+            })
 
-    if any(kw in pool for kw in ["ค่าจ้างค้างจ่าย", "ค่าจ้าง", "ค้างจ่าย", "ล่วงเวลา"]):
-        suggestions.append({
-            "id": 3,
-            "title": "คำฟ้องคดีค่าจ้างค้างจ่าย รง1",
-            "description": "คำฟ้องเรียกร้องค่าจ้างและค่าล่วงเวลา",
-            "keywords": ["ค่าจ้าง", "ค้างจ่าย", "ค่าล่วงเวลา", "รง1"],
-            "court": "ศาลแรงงานกลาง",
-            "score": 0.7,
-        })
+        if any(kw in pool for kw in ["ค่าจ้างค้างจ่าย", "ค่าจ้าง", "ค้างจ่าย", "ล่วงเวลา"]):
+            suggestions.append({
+                "id": 3,
+                "title": "คำฟ้องคดีค่าจ้างค้างจ่าย รง1",
+                "description": "คำฟ้องเรียกร้องค่าจ้างและค่าล่วงเวลา",
+                "keywords": ["ค่าจ้าง", "ค้างจ่าย", "ค่าล่วงเวลา", "รง1"],
+                "court": "ศาลแรงงานกลาง",
+                "score": 0.7,
+            })
 
-    # Fallback to simple fuzzy over static list if no suggestions
-    if not suggestions:
-        for doc in COURT_DOCUMENTS:
-            title_score = fuzzy_match(q, doc["title"])
-            desc_score = fuzzy_match(q, doc["description"]) * 0.8
-            keyword_score = 0.0
-            for keyword in doc.get("keywords", []):
-                keyword_score = max(keyword_score, fuzzy_match(q, keyword))
-            keyword_score *= 0.9
-            final_score = max(title_score, desc_score, keyword_score)
-            if final_score > 0.2:
-                suggestions.append({**doc, "score": final_score})
+        # If Neo4j worked but no suggestions, fallback to fuzzy
+        if not suggestions:
+            for doc in COURT_DOCUMENTS:
+                title_score = fuzzy_match(q, doc["title"])
+                desc_score = fuzzy_match(q, doc["description"]) * 0.8
+                keyword_score = 0.0
+                for keyword in doc.get("keywords", []):
+                    keyword_score = max(keyword_score, fuzzy_match(q, keyword))
+                keyword_score *= 0.9
+                final_score = max(title_score, desc_score, keyword_score)
+                if final_score > 0.2:
+                    suggestions.append({**doc, "score": final_score})
+
+    except Exception as e:
+        # Neo4j failed, fallback to simple search
+        print(f"Neo4j search failed: {e}, falling back to simple search")
+        return search_court_documents_simple(q, case_id, k)
 
     # Sort and return
     suggestions.sort(key=lambda x: x.get("score", 0.0), reverse=True)
@@ -247,4 +255,39 @@ def search_court_documents(
         "case_id": cid,
         "results": suggestions[:5],
         "total": len(suggestions),
+        "source": "hybrid_search"
+    }
+
+
+@router.get("/court-documents/search-simple")
+def search_court_documents_simple(
+    q: str = Query(..., min_length=1, description="Search query"),
+    case_id: Optional[str] = None,
+    k: int = 5,
+):
+    """Simple court document search using fuzzy matching only"""
+    cid = case_id or "simple_case"
+
+    suggestions: List[Dict] = []
+
+    # Direct fuzzy matching over static list
+    for doc in COURT_DOCUMENTS:
+        title_score = fuzzy_match(q, doc["title"])
+        desc_score = fuzzy_match(q, doc["description"]) * 0.8
+        keyword_score = 0.0
+        for keyword in doc.get("keywords", []):
+            keyword_score = max(keyword_score, fuzzy_match(q, keyword))
+        keyword_score *= 0.9
+        final_score = max(title_score, desc_score, keyword_score)
+        if final_score > 0.1:  # Lower threshold for better results
+            suggestions.append({**doc, "score": final_score})
+
+    # Sort and return
+    suggestions.sort(key=lambda x: x.get("score", 0.0), reverse=True)
+    return {
+        "query": q,
+        "case_id": cid,
+        "results": suggestions[:k],
+        "total": len(suggestions),
+        "source": "simple_search"
     }
