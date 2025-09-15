@@ -1,0 +1,250 @@
+"""FastAPI route handlers"""
+
+from collections import deque
+from typing import Optional, List, Dict
+from fastapi import APIRouter, HTTPException, Query
+from ..models.api import (
+    IngestRequest, 
+    AskRequest,
+    IngestResponse,
+    FactResponse,
+    ChunkResponse,
+    SearchResponse,
+    AnswerResponse
+)
+from ..services.neo4j_service import (
+    setup_constraints, 
+    upsert_graph, 
+    index_doc_chunks,
+    fetch_doc_chunks,
+    graph_retrieve
+)
+from ..services.extraction import rule_based_extract, detect_case_id
+from ..services.search import hybrid_search, synthesize_answer
+from ..models.graph import SimpleGraphDocument
+
+
+# Router instance
+router = APIRouter()
+
+# Ingest buffer for tracking recent case IDs
+INGEST_BUFFER = deque(maxlen=10)
+
+
+def latest_case_id() -> Optional[str]:
+    """Get the most recent case ID from buffer"""
+    try:
+        return INGEST_BUFFER[-1]["case_id"]
+    except (IndexError, KeyError):
+        return None
+
+
+@router.post("/ingest", response_model=IngestResponse)
+def ingest(req: IngestRequest):
+    """Ingest text documents and extract knowledge graph"""
+    if not req.texts:
+        raise HTTPException(status_code=400, detail="texts is required")
+    
+    setup_constraints()
+    
+    # Determine case ID
+    provided = (req.case_id or "").strip()
+    if not provided or provided.lower() in {"string", "auto", "null"}:
+        case_id = detect_case_id(req.texts)
+    else:
+        case_id = provided
+    
+    # Extract graph from all chunks
+    all_docs: list[SimpleGraphDocument] = []
+    for chunk in req.texts:
+        docs = rule_based_extract(chunk)
+        all_docs.extend(docs)
+    
+    # Upsert to Neo4j
+    upsert_graph(all_docs, case_id)
+    index_doc_chunks(req.texts, case_id)
+    
+    # Track in buffer
+    INGEST_BUFFER.append({"texts": req.texts, "case_id": case_id})
+    
+    return {"case_id": case_id, "chunks": len(req.texts)}
+
+
+@router.get("/cases/{case_id}/facts", response_model=FactResponse)
+def get_facts(case_id: str, limit: int = 20):
+    """Get graph facts for a specific case"""
+    facts = graph_retrieve(case_id=case_id, limit=limit)
+    return {"case_id": case_id, "facts": facts}
+
+
+@router.get("/Health")
+def health_check():
+    """Health check endpoint"""
+    return {"status": "ok"}
+
+
+@router.get("/chunks/{case_id}", response_model=ChunkResponse)
+def get_chunks(case_id: str):
+    """Get document chunks for a specific case"""
+    items = fetch_doc_chunks(case_id)
+    return {"case_id": case_id, "chunks": items}
+
+
+@router.get("/search", response_model=SearchResponse)
+def search(q: str = Query(..., min_length=1), case_id: Optional[str] = None, k: int = 5):
+    """Search documents and graph"""
+    case_id = case_id or latest_case_id()
+    docs, facts = hybrid_search(q, case_id=case_id, k=k)
+    return {"query": q, "case_id": case_id, "top_docs": docs, "facts": facts}
+
+
+@router.get("/answer", response_model=AnswerResponse)
+def answer(q: str = Query(..., min_length=1), case_id: Optional[str] = None, k: int = 5):
+    """Answer questions using hybrid search"""
+    case_id = case_id or latest_case_id()
+    doc_hits, facts = hybrid_search(q, case_id=case_id, k=k)
+    ans = synthesize_answer(q, doc_hits, facts, case_id=case_id)
+    
+    # Clear buffer after answering
+    INGEST_BUFFER.clear()
+    
+    return {"query": q, "case_id": case_id, "answer": ans, "doc_hits": doc_hits, "facts": facts}
+
+
+@router.post("/ask", response_model=AnswerResponse)
+def ask(req: AskRequest):
+    """Answer questions (POST version)"""
+    q = (req.question or "").strip()
+    if not q:
+        raise HTTPException(status_code=400, detail="question is required")
+    
+    cid = req.case_id or latest_case_id()
+    doc_hits, facts = hybrid_search(q, case_id=cid, k=req.k)
+    ans = synthesize_answer(q, doc_hits, facts, case_id=cid)
+    
+    return {"query": q, "case_id": cid, "answer": ans, "doc_hits": doc_hits, "facts": facts}
+
+# เพิ่มข้อมูลเอกสารศาลแรงงาน
+COURT_DOCUMENTS = [
+    {
+        "id": 1,
+        "title": "คำฟ้องคดีแรงงาน รง1",
+        "description": "คำฟ้องคดีแรงงาน เลิกจ้างไม่เป็นธรรม",
+        "keywords": ["คดีแรงงาน", "เลิกจ้าง", "ไม่เป็นธรรม", "คำฟ้อง", "รง1"],
+        "court": "ศาลแรงงานกลาง"
+    },
+    {
+        "id": 2,
+        "title": "คำร้องคดีแรงงาน รง1",
+        "description": "คำร้องขอค่าชดเชยการเลิกจ้าง",
+        "keywords": ["ค่าชดเชย", "เลิกจ้าง", "คำร้อง", "รง2"],
+        "court": "ศาลแรงงานกลาง"
+    },
+    {
+        "id": 3,
+        "title": "คำฟ้องคดีค่าจ้างค้างจ่าย รง1",
+        "description": "คำฟ้องเรียกร้องค่าจ้างและค่าล่วงเวลา",
+        "keywords": ["ค่าจ้าง", "ค้างจ่าย", "ค่าล่วงเวลา", "รง3"],
+        "court": "ศาลแรงงานกลาง"
+    },
+    {
+        "id": 4,
+        "title": "คำร้องขอคุ้มครองชั่วคราว",
+        "description": "คำร้องขอให้ศาลมีคำสั่งคุ้มครองชั่วคราว",
+        "keywords": ["คุ้มครอง", "ชั่วคราว", "คำร้อง"],
+        "court": "ศาลแรงงานกลาง"
+    },
+    {
+        "id": 5,
+        "title": "คำร้องอุทธรณ์คดีแรงงาน",
+        "description": "คำร้องอุทธรณ์คำพิพากษาศาลแรงงาน",
+        "keywords": ["อุทธรณ์", "คำพิพากษา", "แรงงาน"],
+        "court": "ศาลแรงงานกลาง"
+    }
+]
+
+def fuzzy_match(query: str, text: str) -> float:
+    """Simple fuzzy matching score"""
+    query_lower = query.lower()
+    text_lower = text.lower()
+    
+    # Direct substring match
+    if query_lower in text_lower:
+        return 1.0
+    
+    # Word-based matching
+    query_words = set(query_lower.split())
+    text_words = set(text_lower.split())
+    
+    if not query_words:
+        return 0.0
+    
+    common_words = query_words.intersection(text_words)
+    return len(common_words) / len(query_words)
+
+@router.get("/court-documents/search")
+def search_court_documents(
+    q: str = Query(..., min_length=1, description="Search query"),
+    case_id: Optional[str] = None,
+    k: int = 5,
+):
+    """Suggest court document template using hybrid KG search with fuzzy fallback"""
+    cid = case_id or latest_case_id()
+
+    # Query documents and graph facts via hybrid search
+    doc_hits, facts = hybrid_search(q, case_id=cid, k=k)
+
+    # Aggregate context
+    pool_parts: List[str] = [q]
+    pool_parts.extend([d.get("text", "") for d in doc_hits])
+    for f in facts:
+        pool_parts.append(str(f.get("person", "")))
+        pool_parts.append(str(f.get("role", "")))
+        pool_parts.append(str(f.get("amount", "")))
+        pool_parts.append(str(f.get("date", "")))
+    pool = " ".join(pool_parts).lower()
+
+    suggestions: List[Dict] = []
+
+    # Heuristic mapping from query+facts to document templates
+    if any(kw in pool for kw in ["เลิกจ้างไม่เป็นธรรม", "เลิกจ้าง", "ไม่เป็นธรรม"]):
+        suggestions.append({
+            "id": 1,
+            "title": "คำฟ้องคดีแรงงาน รง1",
+            "description": "คำฟ้องคดีแรงงาน เลิกจ้างไม่เป็นธรรม",
+            "keywords": ["คดีแรงงาน", "เลิกจ้าง", "ไม่เป็นธรรม", "คำฟ้อง", "รง1"],
+            "court": "ศาลแรงงานกลาง",
+            "score": max([d.get("score", 0.0) for d in doc_hits] or [0.8]),
+        })
+
+    if any(kw in pool for kw in ["ค่าจ้างค้างจ่าย", "ค่าจ้าง", "ค้างจ่าย", "ล่วงเวลา"]):
+        suggestions.append({
+            "id": 3,
+            "title": "คำฟ้องคดีค่าจ้างค้างจ่าย รง1",
+            "description": "คำฟ้องเรียกร้องค่าจ้างและค่าล่วงเวลา",
+            "keywords": ["ค่าจ้าง", "ค้างจ่าย", "ค่าล่วงเวลา", "รง1"],
+            "court": "ศาลแรงงานกลาง",
+            "score": 0.7,
+        })
+
+    # Fallback to simple fuzzy over static list if no suggestions
+    if not suggestions:
+        for doc in COURT_DOCUMENTS:
+            title_score = fuzzy_match(q, doc["title"])
+            desc_score = fuzzy_match(q, doc["description"]) * 0.8
+            keyword_score = 0.0
+            for keyword in doc.get("keywords", []):
+                keyword_score = max(keyword_score, fuzzy_match(q, keyword))
+            keyword_score *= 0.9
+            final_score = max(title_score, desc_score, keyword_score)
+            if final_score > 0.2:
+                suggestions.append({**doc, "score": final_score})
+
+    # Sort and return
+    suggestions.sort(key=lambda x: x.get("score", 0.0), reverse=True)
+    return {
+        "query": q,
+        "case_id": cid,
+        "results": suggestions[:5],
+        "total": len(suggestions),
+    }
