@@ -530,6 +530,516 @@ def upsert_defendant_to_graph(defendant_info: Dict, case_id: str):
     print(f"Added defendant {entity_name} to case {case_id}")
 
 
+def parse_payment_period_and_termination(text: str) -> Dict:
+    """Parse payment period and termination reason from text.
+    
+    Args:
+        text: Input text in Thai
+    
+    Returns:
+        Dict with payment period and termination reason
+    """
+    s = text.strip()
+    
+    # Parse payment period
+    payment_period = "รายเดือน"  # Default
+    
+    # Check for daily payment indicators
+    daily_indicators = [
+        r"ค่าจ้างรายวัน",
+        r"เงินวันละ",
+        r"วันละ\s*\d+\s*บาท",
+        r"ได้รับค่าจ้างรายวัน",
+        r"จ่ายรายวัน"
+    ]
+    
+    for pattern in daily_indicators:
+        if re.search(pattern, s):
+            payment_period = "รายวัน"
+            break
+    
+    # Check for monthly payment indicators
+    monthly_indicators = [
+        r"ค่าจ้างรายเดือน",
+        r"เงินเดือน",
+        r"เดือนละ\s*\d+\s*บาท",
+        r"ได้รับค่าจ้างรายเดือน",
+        r"จ่ายรายเดือน"
+    ]
+    
+    for pattern in monthly_indicators:
+        if re.search(pattern, s):
+            payment_period = "รายเดือน"
+            break
+    
+    # Parse termination reason
+    termination_reason = "เลิกจ้างโดยนายจ้าง"  # Default
+    
+    # Check for resignation
+    resignation_patterns = [
+        r"ลาออก",
+        r"ออกจากงาน",
+        r"ขอลาออก",
+        r"ลาออกเอง"
+    ]
+    
+    for pattern in resignation_patterns:
+        if re.search(pattern, s):
+            termination_reason = "ลาออกเอง"
+            break
+    
+    # Check for serious misconduct termination
+    misconduct_patterns = [
+        r"เลิกจ้างเพราะผิดร้ายแรง",
+        r"ผิดร้ายแรง",
+        r"มาตรา\s*119",
+        r"กระทำผิดร้ายแรง",
+        r"ประพฤติผิด"
+    ]
+    
+    for pattern in misconduct_patterns:
+        if re.search(pattern, s):
+            termination_reason = "เลิกจ้างเพราะผิดร้ายแรง"
+            break
+    
+    # Check for immediate termination
+    immediate_patterns = [
+        r"เลิกจ้างทันที",
+        r"ไล่ออกทันที",
+        r"ไม่บอกล่วงหน้า",
+        r"เลิกจ้างโดยไม่บอกกล่าวล่วงหน้า"
+    ]
+    
+    for pattern in immediate_patterns:
+        if re.search(pattern, s):
+            if "ผิดร้ายแรง" not in termination_reason:
+                termination_reason = "เลิกจ้างโดยนายจ้างโดยไม่บอกกล่าวล่วงหน้า"
+            break
+    
+    return {
+        "payment_period": payment_period,
+        "termination_reason": termination_reason,
+        "raw_text": s
+    }
+
+
+def parse_employment_info(text: str) -> Dict:
+    """Parse employment information from Thai text.
+    Returns dict with keys: start_date, position, daily_wage, years, months, total_days, etc.
+    """
+    s = normalize_thai_digits((text or "").strip())
+    
+    # Parse start date
+    start_date = None
+    start_date_iso = None
+    
+    # Pattern: "1 ม.ค. 60" or "1 มกราคม 2560"
+    m_date = re.search(r"(\d{1,2})\s*(ม\.ค\.|มกราคม|ก\.พ\.|กุมภาพันธ์|มี\.ค\.|มีนาคม|เม\.ย\.|เมษายน|พ\.ค\.|พฤษภาคม|มิ\.ย\.|มิถุนายน|ก\.ค\.|กรกฎาคม|ส\.ค\.|สิงหาคม|ก\.ย\.|กันยายน|ต\.ค\.|ตุลาคม|พ\.ย\.|พฤศจิกายน|ธ\.ค\.|ธันวาคม)\s*(\d{2,4})", s)
+    if m_date:
+        day = int(m_date.group(1))
+        month_str = m_date.group(2)
+        year = int(m_date.group(3))
+        
+        # Convert short month to full month for THAI_MONTHS lookup
+        month_mapping = {
+            "ม.ค.": "มกราคม", "ก.พ.": "กุมภาพันธ์", "มี.ค.": "มีนาคม", "เม.ย.": "เมษายน",
+            "พ.ค.": "พฤษภาคม", "มิ.ย.": "มิถุนายน", "ก.ค.": "กรกฎาคม", "ส.ค.": "สิงหาคม",
+            "ก.ย.": "กันยายน", "ต.ค.": "ตุลาคม", "พ.ย.": "พฤศจิกายน", "ธ.ค.": "ธันวาคม"
+        }
+        
+        full_month = month_mapping.get(month_str, month_str)
+        month_num = THAI_MONTHS.get(full_month)
+        
+        if month_num:
+            # Handle Buddhist year (convert to Gregorian if needed)
+            if year < 100:  # 60 -> 2560
+                year += 2500
+            if year > 2400:  # Buddhist to Gregorian
+                year -= 543
+            
+            start_date = f"{day} {full_month} {year + 543}"  # Keep Thai format for display
+            start_date_iso = f"{year:04d}-{month_num:02d}-{day:02d}"
+    
+    # Parse position
+    position = None
+    m_pos = re.search(r"(?:ตำแหน่ง|เป็น)\s*([\u0E00-\u0E7F\s]+?)(?:\s|$|เงิน|ค่าจ้าง)", s)
+    if m_pos:
+        position = m_pos.group(1).strip()
+    
+    # Parse daily wage
+    daily_wage = None
+    m_wage = re.search(r"เงิน(?:วันละ|รายวัน)?\s*(\d+)\s*บาท", s)
+    if not m_wage:
+        m_wage = re.search(r"ค่าจ้าง(?:รายวัน)?(?:วันละ)?\s*(\d+)\s*บาท", s)
+    if not m_wage:
+        # Check for monthly salary (convert to daily)
+        m_monthly = re.search(r"เงินเดือน\s*(\d+)\s*บาท", s)
+        if not m_monthly:
+            m_monthly = re.search(r"เดือนละ\s*(\d+)\s*บาท", s)
+        if m_monthly:
+            monthly_salary = int(m_monthly.group(1))
+            daily_wage = monthly_salary / 30  # Convert to daily wage
+    if m_wage:
+        daily_wage = int(m_wage.group(1))
+    
+    # Parse working period (years and months)
+    years = 0
+    months = 0
+    
+    m_period = re.search(r"ทำ(?:งาน|มา)?\s*(\d+)\s*ปี(?:\s*(\d+)\s*เดือน)?", s)
+    if m_period:
+        years = int(m_period.group(1))
+        if m_period.group(2):
+            months = int(m_period.group(2))
+    
+    # Parse weekend/holiday information
+    weekend_days = None
+    weekend_pattern = None
+    
+    # Pattern: "หยุดอาทิตย์ละ X วัน" or "หยุดอาทิย์ละ X วัน"
+    m_weekend = re.search(r"หยุด(?:อาทิตย์|อาทิย์)ละ\s*(\d+)\s*วัน", s)
+    if m_weekend:
+        weekend_days = int(m_weekend.group(1))
+        if weekend_days == 1:
+            weekend_pattern = "หยุดอาทิตย์ละ 1 วัน (6 วันทำงาน/สัปดาห์)"
+        elif weekend_days == 2:
+            weekend_pattern = "หยุดอาทิตย์ละ 2 วัน (5 วันทำงาน/สัปดาห์)"
+        else:
+            weekend_pattern = f"หยุดอาทิตย์ละ {weekend_days} วัน"
+    
+    # Calculate total working days (more accurate with weekend info)
+    if weekend_days:
+        # Calculate working days per week
+        working_days_per_week = 7 - weekend_days
+        # Calculate total weeks worked
+        total_weeks = ((years * 52) + (months * 4.33))
+        # Calculate actual working days
+        total_working_days = int(total_weeks * working_days_per_week)
+    else:
+        # Default calculation (assume 6 days/week)
+        total_working_days = (years * 365) + (months * 30)
+    
+    # Keep total_days for backward compatibility
+    total_days = total_working_days
+    
+    # Parse payment period and termination info
+    payment_info = parse_payment_period_and_termination(s)
+    
+    return {
+        "start_date": start_date,
+        "start_date_iso": start_date_iso,
+        "position": position,
+        "daily_wage": daily_wage,
+        "years": years,
+        "months": months,
+        "total_days": total_days,
+        "weekend_days": weekend_days,
+        "weekend_pattern": weekend_pattern,
+        "total_working_days": total_working_days,
+        "payment_period": payment_info["payment_period"],
+        "termination_reason": payment_info["termination_reason"],
+        "raw_text": s
+    }
+
+
+def calculate_advance_notice_pay(daily_wage: float, payment_period: str = "รายเดือน", termination_reason: str = "เลิกจ้างโดยนายจ้าง") -> Dict:
+    """Calculate advance notice pay according to Labor Protection Act Section 17.
+    
+    Args:
+        daily_wage: Daily wage amount
+        payment_period: Payment period ("รายวัน", "รายเดือน")
+        termination_reason: Reason for termination
+    
+    Returns:
+        Dict with advance notice pay calculation details
+    """
+    
+    # Check if entitled to advance notice pay
+    exempt_reasons = [
+        "ลาออกเอง",
+        "เลิกจ้างเพราะผิดร้ายแรง",
+        "มาตรา 119",
+        "ผิดร้ายแรง"
+    ]
+    
+    is_exempt = any(reason in termination_reason for reason in exempt_reasons)
+    
+    if is_exempt:
+        return {
+            "daily_wage": daily_wage,
+            "payment_period": payment_period,
+            "termination_reason": termination_reason,
+            "is_entitled": False,
+            "advance_notice_pay": 0,
+            "advance_notice_days": 0,
+            "calculation_basis": "ไม่มีสิทธิได้รับค่าบอกกล่าวล่วงหน้า",
+            "legal_reference": "มาตรา 17 พระราชบัญญัติคุ้มครองแรงงาน พ.ศ. ๒๕๔๑"
+        }
+    
+    # Calculate advance notice pay based on payment period
+    if payment_period == "รายวัน":
+        # Daily payment: 1 payment period (assume 7 days for weekly payment)
+        advance_notice_days = 7
+        advance_notice_pay = daily_wage * advance_notice_days
+        calculation_basis = "รายวัน: ต้องบอกล่วงหน้าอย่างน้อย 1 งวดการจ่าย (7 วัน)"
+    elif payment_period == "รายเดือน":
+        # Monthly payment: 1 month (assume 30 days)
+        advance_notice_days = 30
+        advance_notice_pay = daily_wage * advance_notice_days
+        calculation_basis = "รายเดือน: ต้องบอกล่วงหน้าอย่างน้อย 1 เดือน (30 วัน)"
+    else:
+        # Default to monthly
+        advance_notice_days = 30
+        advance_notice_pay = daily_wage * advance_notice_days
+        calculation_basis = "ไม่ระบุงวดการจ่าย: ใช้ค่าเริ่มต้น 1 เดือน (30 วัน)"
+    
+    return {
+        "daily_wage": daily_wage,
+        "payment_period": payment_period,
+        "termination_reason": termination_reason,
+        "is_entitled": True,
+        "advance_notice_pay": advance_notice_pay,
+        "advance_notice_days": advance_notice_days,
+        "calculation_basis": calculation_basis,
+        "legal_reference": "มาตรา 17 พระราชบัญญัติคุ้มครองแรงงาน พ.ศ. ๒๕๔๑"
+    }
+
+
+def calculate_severance_pay(daily_wage: float, years: int, months: int) -> Dict:
+    """Calculate severance pay according to Labor Protection Act Section 118.
+    
+    Args:
+        daily_wage: Daily wage in THB
+        years: Years of continuous employment
+        months: Additional months of employment
+    
+    Returns:
+        Dict with severance pay calculation
+    """
+    # Convert total period to days (approximate)
+    total_days = (years * 365) + (months * 30)
+    
+    # Determine severance pay days according to Section 118
+    if total_days >= 120 and years < 1:
+        # 120 days to 1 year: 30 days
+        severance_days = 30
+        category = "120 วัน - 1 ปี"
+    elif years >= 1 and years < 3:
+        # 1 year to 3 years: 90 days
+        severance_days = 90
+        category = "1 - 3 ปี"
+    elif years >= 3 and years < 6:
+        # 3 years to 6 years: 180 days
+        severance_days = 180
+        category = "3 - 6 ปี"
+    elif years >= 6 and years < 10:
+        # 6 years to 10 years: 240 days
+        severance_days = 240
+        category = "6 - 10 ปี"
+    elif years >= 10 and years < 20:
+        # 10 years to 20 years: 300 days
+        severance_days = 300
+        category = "10 - 20 ปี"
+    elif years >= 20:
+        # 20 years and above: 400 days
+        severance_days = 400
+        category = "20 ปีขึ้นไป"
+    else:
+        # Less than 120 days: no severance pay
+        severance_days = 0
+        category = "ไม่ถึง 120 วัน"
+    
+    severance_amount = daily_wage * severance_days
+    
+    return {
+        "daily_wage": daily_wage,
+        "years": years,
+        "months": months,
+        "total_days": total_days,
+        "severance_days": severance_days,
+        "severance_amount": round(severance_amount, 2),
+        "category": category,
+        "legal_reference": "มาตรา 118 พระราชบัญญัติคุ้มครองแรงงาน พ.ศ. ๒๕๔๑"
+    }
+
+
+def calculate_labor_law_interest(principal_amount: float, days_overdue: int) -> Dict:
+    """Calculate interest and penalty according to Labor Protection Act Section 9.
+    
+    Args:
+        principal_amount: The amount owed (in THB)
+        days_overdue: Number of days overdue
+    
+    Returns:
+        Dict with interest calculations
+    """
+    # Section 9 Paragraph 1: 15% interest per year
+    annual_rate = 0.15
+    daily_rate = annual_rate / 365
+    interest = principal_amount * daily_rate * days_overdue
+    
+    # Section 9 Paragraph 2: 15% penalty every 7 days (if intentionally withheld)
+    penalty_periods = days_overdue // 7
+    penalty = principal_amount * 0.15 * penalty_periods
+    
+    total_amount = principal_amount + interest + penalty
+    
+    return {
+        "principal": principal_amount,
+        "days_overdue": days_overdue,
+        "annual_interest_rate": annual_rate,
+        "daily_interest_rate": daily_rate,
+        "interest": round(interest, 2),
+        "penalty_periods": penalty_periods,
+        "penalty": round(penalty, 2),
+        "total_amount": round(total_amount, 2),
+        "legal_reference": "มาตรา 9 พระราชบัญญัติคุ้มครองแรงงาน พ.ศ. ๒๕๔๑"
+    }
+
+
+def format_employment_summary(employment_info: Dict, case_id: str = None) -> str:
+    """Format employment information into a readable Thai summary."""
+    parts = []
+    
+    if employment_info.get("start_date"):
+        parts.append(f"โจทก์เข้าทำงานเมื่อวันที่ {employment_info['start_date']}")
+    
+    if employment_info.get("position"):
+        parts.append(f"ตำแหน่ง{employment_info['position']}")
+    
+    if employment_info.get("daily_wage"):
+        parts.append(f"ค่าจ้างรายวันวันละ {employment_info['daily_wage']:,} บาท")
+    
+    if employment_info.get("years") or employment_info.get("months"):
+        period_parts = []
+        if employment_info.get("years"):
+            period_parts.append(f"{employment_info['years']} ปี")
+        if employment_info.get("months"):
+            period_parts.append(f"{employment_info['months']} เดือน")
+        
+        if period_parts:
+            parts.append(f"ทำงานต่อเนื่องเป็นเวลา {' '.join(period_parts)}")
+    
+    # Add weekend/working schedule information
+    if employment_info.get("weekend_pattern"):
+        parts.append(employment_info["weekend_pattern"])
+    
+    return " ".join(parts)
+
+
+def upsert_employment_to_graph(employment_info: Dict, case_id: str):
+    """Add employment information to Neo4j graph and link to court case."""
+    from ..services.neo4j_service import upsert_graph
+    from ..models.graph import SimpleNode, SimpleRel, SimpleGraphDocument
+    
+    nodes = []
+    relationships = []
+    
+    # Employment contract node
+    contract_id = f"employment_{case_id}"
+    contract_node = SimpleNode(contract_id, "EmploymentContract")
+    nodes.append(contract_node)
+    
+    # Link to court case
+    case_node = SimpleNode(f"case_{case_id}", "CourtCase")
+    nodes.append(case_node)
+    relationships.append(SimpleRel(contract_node, case_node, "RELATES_TO"))
+    
+    # Position node
+    if employment_info.get("position"):
+        pos_id = f"position_{employment_info['position']}_{case_id}"
+        pos_node = SimpleNode(pos_id, "Position")
+        nodes.append(pos_node)
+        relationships.append(SimpleRel(contract_node, pos_node, "HAS_POSITION"))
+    
+    # Salary node
+    if employment_info.get("daily_wage"):
+        salary_id = f"salary_{employment_info['daily_wage']}_{case_id}"
+        salary_node = SimpleNode(salary_id, "Salary")
+        nodes.append(salary_node)
+        relationships.append(SimpleRel(contract_node, salary_node, "HAS_SALARY"))
+    
+    # Employment period node
+    if employment_info.get("years") or employment_info.get("months"):
+        period_id = f"period_{employment_info.get('years', 0)}y_{employment_info.get('months', 0)}m_{case_id}"
+        period_node = SimpleNode(period_id, "EmploymentPeriod")
+        nodes.append(period_node)
+        relationships.append(SimpleRel(contract_node, period_node, "HAS_PERIOD"))
+        
+        # Working days node
+        if employment_info.get("total_days"):
+            days_id = f"days_{employment_info['total_days']}_{case_id}"
+            days_node = SimpleNode(days_id, "WorkingDays")
+            nodes.append(days_node)
+            relationships.append(SimpleRel(period_node, days_node, "WORKED_DAYS"))
+        
+        # Severance pay node (if applicable)
+        if employment_info.get("years") is not None and employment_info.get("daily_wage"):
+            severance_info = calculate_severance_pay(
+                employment_info["daily_wage"], 
+                employment_info.get("years", 0), 
+                employment_info.get("months", 0)
+            )
+            if severance_info["severance_days"] > 0:
+                severance_id = f"severance_{severance_info['severance_days']}days_{case_id}"
+                severance_node = SimpleNode(severance_id, "SeverancePay")
+                nodes.append(severance_node)
+                relationships.append(SimpleRel(period_node, severance_node, "ENTITLED_TO"))
+    
+    # Working schedule node (if weekend info available)
+    if employment_info.get("weekend_days") is not None:
+        schedule_id = f"schedule_{employment_info['weekend_days']}weekend_{case_id}"
+        schedule_node = SimpleNode(schedule_id, "WorkingSchedule")
+        nodes.append(schedule_node)
+        relationships.append(SimpleRel(contract_node, schedule_node, "HAS_SCHEDULE"))
+        
+        # Weekend days node
+        weekend_id = f"weekend_{employment_info['weekend_days']}days_{case_id}"
+        weekend_node = SimpleNode(weekend_id, "WeekendDays")
+        nodes.append(weekend_node)
+        relationships.append(SimpleRel(schedule_node, weekend_node, "HAS_WEEKEND"))
+    
+    # Payment period node
+    if employment_info.get("payment_period"):
+        period_id = f"payment_{employment_info['payment_period']}_{case_id}"
+        payment_period_node = SimpleNode(period_id, "PaymentPeriod")
+        nodes.append(payment_period_node)
+        relationships.append(SimpleRel(contract_node, payment_period_node, "HAS_PAYMENT_PERIOD"))
+    
+    # Termination reason node
+    if employment_info.get("termination_reason"):
+        reason_id = f"termination_{employment_info['termination_reason'].replace(' ', '_')}_{case_id}"
+        termination_node = SimpleNode(reason_id, "TerminationReason")
+        nodes.append(termination_node)
+        relationships.append(SimpleRel(contract_node, termination_node, "TERMINATED_FOR"))
+    
+    # Advance notice pay node (if applicable)
+    if employment_info.get("daily_wage") and employment_info.get("payment_period"):
+        advance_notice_info = calculate_advance_notice_pay(
+            employment_info["daily_wage"],
+            employment_info["payment_period"],
+            employment_info.get("termination_reason", "เลิกจ้างโดยนายจ้าง")
+        )
+        
+        if advance_notice_info["is_entitled"]:
+            notice_id = f"advance_notice_{advance_notice_info['advance_notice_days']}days_{case_id}"
+            notice_node = SimpleNode(notice_id, "AdvanceNoticePay")
+            nodes.append(notice_node)
+            relationships.append(SimpleRel(contract_node, notice_node, "REQUIRES_NOTICE"))
+    
+    # Start date node
+    if employment_info.get("start_date_iso"):
+        date_id = f"start_date_{employment_info['start_date_iso']}_{case_id}"
+        date_node = SimpleNode(date_id, "Date")
+        nodes.append(date_node)
+        relationships.append(SimpleRel(contract_node, date_node, "OCCURRED_ON"))
+    
+    # Upsert to Neo4j
+    doc = SimpleGraphDocument(nodes=nodes, relationships=relationships)
+    upsert_graph([doc], case_id)
+    print(f"Added employment info to case {case_id}")
+
+
 def upsert_thai_provinces():
     """Add all Thai provinces to Neo4j graph."""
     from ..services.neo4j_service import upsert_graph

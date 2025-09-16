@@ -363,6 +363,69 @@ def search_court_documents(
         print(f"Step 3 parsing failed: {e}")
         pass
 
+    # Optional: Step 4 support (parse employment info)
+    employment_block: Optional[Dict] = None
+    try:
+        if step == 4:
+            from ..utils.thai_parser import parse_employment_info, format_employment_summary, calculate_labor_law_interest, calculate_severance_pay, calculate_advance_notice_pay
+            info = parse_employment_info(q)
+            
+            # Format summary
+            formatted = format_employment_summary(info, cid)
+            
+            # Calculate severance pay
+            severance_calculation = None
+            if info.get("daily_wage") and info.get("years") is not None:
+                severance_calculation = calculate_severance_pay(
+                    info["daily_wage"], 
+                    info.get("years", 0), 
+                    info.get("months", 0)
+                )
+            
+            # Calculate potential interest/penalty (example with 30 days overdue)
+            interest_calculation = None
+            if info.get("daily_wage"):
+                # Example calculation for unpaid wages (30 days)
+                unpaid_amount = info["daily_wage"] * 30  # Assume 30 days unpaid
+                interest_calculation = calculate_labor_law_interest(unpaid_amount, 30)
+            
+            # Calculate advance notice pay
+            advance_notice_calculation = None
+            if info.get("daily_wage"):
+                advance_notice_calculation = calculate_advance_notice_pay(
+                    info["daily_wage"],
+                    info.get("payment_period", "รายเดือน"),
+                    info.get("termination_reason", "เลิกจ้างโดยนายจ้าง")
+                )
+            
+            employment_block = {
+                "parsed": info,
+                "formatted": formatted,
+                "severance_calculation": severance_calculation,
+                "interest_calculation": interest_calculation,
+                "advance_notice_calculation": advance_notice_calculation
+            }
+            
+            # Store employment info to Neo4j graph
+            try:
+                from ..utils.thai_parser import upsert_employment_to_graph
+                upsert_employment_to_graph(info, cid)
+            except Exception as e:
+                print(f"Failed to store employment to graph: {e}")
+            
+            resp = {
+                "query": q,
+                "case_id": cid,
+                "results": suggestions[:5],
+                "total": len(suggestions),
+                "source": "hybrid_search",
+                "employment": employment_block,
+            }
+            return resp
+    except Exception as e:
+        print(f"Step 4 parsing failed: {e}")
+        pass
+
     # Sort and return
     suggestions.sort(key=lambda x: x.get("score", 0.0), reverse=True)
     resp = {

@@ -38,6 +38,16 @@ def setup_constraints():
         "CREATE CONSTRAINT uniq_subdistrict_name IF NOT EXISTS FOR (n:Subdistrict) REQUIRE n.name IS UNIQUE",
         "CREATE CONSTRAINT uniq_postal_code IF NOT EXISTS FOR (n:PostalCode) REQUIRE n.code IS UNIQUE",
         "CREATE CONSTRAINT uniq_phone_number IF NOT EXISTS FOR (n:PhoneNumber) REQUIRE n.number IS UNIQUE",
+        # Employment constraints
+        "CREATE CONSTRAINT uniq_employment_period IF NOT EXISTS FOR (n:EmploymentPeriod) REQUIRE n.id IS UNIQUE",
+        "CREATE CONSTRAINT uniq_salary IF NOT EXISTS FOR (n:Salary) REQUIRE n.id IS UNIQUE",
+        "CREATE CONSTRAINT uniq_working_days IF NOT EXISTS FOR (n:WorkingDays) REQUIRE n.id IS UNIQUE",
+        "CREATE CONSTRAINT uniq_severance_pay IF NOT EXISTS FOR (n:SeverancePay) REQUIRE n.id IS UNIQUE",
+        "CREATE CONSTRAINT uniq_working_schedule IF NOT EXISTS FOR (n:WorkingSchedule) REQUIRE n.id IS UNIQUE",
+        "CREATE CONSTRAINT uniq_weekend_days IF NOT EXISTS FOR (n:WeekendDays) REQUIRE n.id IS UNIQUE",
+        "CREATE CONSTRAINT uniq_advance_notice_pay IF NOT EXISTS FOR (n:AdvanceNoticePay) REQUIRE n.id IS UNIQUE",
+        "CREATE CONSTRAINT uniq_payment_period IF NOT EXISTS FOR (n:PaymentPeriod) REQUIRE n.id IS UNIQUE",
+        "CREATE CONSTRAINT uniq_termination_reason IF NOT EXISTS FOR (n:TerminationReason) REQUIRE n.id IS UNIQUE",
     ]
     
     with GraphDatabase.driver(NEO4J_URI, auth=NEO4J_AUTH) as driver:

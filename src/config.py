@@ -23,6 +23,15 @@ ALLOWED_NODE_LABELS = [
     # Employment domain
     "EmploymentContract",
     "Position",
+    "EmploymentPeriod",  # ระยะเวลาการจ้างงาน
+    "Salary",           # เงินเดือน/ค่าจ้าง
+    "WorkingDays",      # จำนวนวันทำงาน
+    "SeverancePay",     # ค่าชดเชยตามมาตรา 118
+    "WorkingSchedule",  # ตารางการทำงาน
+    "WeekendDays",      # จำนวนวันหยุดสุดสัปดาห์
+    "AdvanceNoticePay", # ค่าบอกกล่าวล่วงหน้า มาตรา 17
+    "PaymentPeriod",    # งวดการจ่ายค่าจ้าง (รายวัน/รายเดือน)
+    "TerminationReason" # เหตุผลการเลิกจ้าง
     # Facts
     "MoneyAmount",
     "Date",
@@ -63,6 +72,16 @@ ALLOWED_REL_TYPES = [
     "CLAIMS",       # (Person)-[:CLAIMS]->(CourtCase)
     # Employment
     "EMPLOYED_BY",  # (Person)-[:EMPLOYED_BY]->(EmploymentContract|Organization|Person)
+    "HAS_POSITION", # (EmploymentContract)-[:HAS_POSITION]->(Position)
+    "HAS_SALARY",   # (EmploymentContract)-[:HAS_SALARY]->(Salary)
+    "HAS_PERIOD",   # (EmploymentContract)-[:HAS_PERIOD]->(EmploymentPeriod)
+    "WORKED_DAYS",  # (EmploymentPeriod)-[:WORKED_DAYS]->(WorkingDays)
+    "ENTITLED_TO",  # (EmploymentPeriod)-[:ENTITLED_TO]->(SeverancePay)
+    "HAS_SCHEDULE", # (EmploymentContract)-[:HAS_SCHEDULE]->(WorkingSchedule)
+    "HAS_WEEKEND",  # (WorkingSchedule)-[:HAS_WEEKEND]->(WeekendDays)
+    "REQUIRES_NOTICE", # (EmploymentContract)-[:REQUIRES_NOTICE]->(AdvanceNoticePay)
+    "HAS_PAYMENT_PERIOD", # (EmploymentContract)-[:HAS_PAYMENT_PERIOD]->(PaymentPeriod)
+    "TERMINATED_FOR", # (EmploymentContract)-[:TERMINATED_FOR]->(TerminationReason)
     # Facts
     "HAS_AMOUNT",   # (* )-[:HAS_AMOUNT]->(MoneyAmount)
     "OCCURRED_ON",  # (* )-[:OCCURRED_ON]->(Date)
