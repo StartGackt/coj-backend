@@ -618,6 +618,50 @@ def search_court_documents(
         print(f"Step 8 parsing failed: {e}")
         pass
 
+    # Optional: Step 9 support (court petition)
+    petition_block: Optional[Dict] = None
+    try:
+        if step == 9:
+            from ..utils.thai_parser import parse_court_petition, format_court_petition, upsert_court_petition_to_graph
+            
+            # Parse court petition
+            info = parse_court_petition(q)
+            
+            # Format petition
+            formatted = format_court_petition(info, cid)
+            
+            petition_block = {
+                "parsed": info,
+                "formatted": formatted,
+                "formal_petition": info.get("formal_petition", ""),
+                "detected_claims": info.get("detected_claims", []),
+                "legal_articles": info.get("legal_articles", []),
+                "primary_law": info.get("primary_law", ""),
+                "secondary_laws": info.get("secondary_laws", []),
+                "claim_count": info.get("claim_count", 0),
+                "article_count": info.get("article_count", 0),
+                "assessment": info.get("assessment", "")
+            }
+            
+            # Store petition to Neo4j graph
+            try:
+                upsert_court_petition_to_graph(info, cid)
+            except Exception as e:
+                print(f"Failed to store court petition to graph: {e}")
+            
+            resp = {
+                "query": q,
+                "case_id": cid,
+                "results": suggestions[:5],
+                "total": len(suggestions),
+                "source": "hybrid_search",
+                "petition": petition_block,
+            }
+            return resp
+    except Exception as e:
+        print(f"Step 9 parsing failed: {e}")
+        pass
+
     # Sort and return
     suggestions.sort(key=lambda x: x.get("score", 0.0), reverse=True)
     resp = {

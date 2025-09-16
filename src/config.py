@@ -69,12 +69,6 @@ ALLOWED_NODE_LABELS = [
     "PhoneNumber",  # เบอร์โทรศัพท์
     # Generic
     "Entity",
-    # Legal References
-    "LegalCitation",
-    "SeveranceLaw",
-    "AdvanceNoticeLaw", 
-    "InterestLaw",
-    "LaborLaw",
 ]
 
 ALLOWED_REL_TYPES = [
@@ -101,8 +95,6 @@ ALLOWED_REL_TYPES = [
     "REQUESTS", # (CourtCase)-[:REQUESTS]->(CourtRequest)
     "CLAIMS", # (CourtRequest)-[:CLAIMS]->(Damages|AdvanceNoticePay|SeverancePay|VacationPay)
     "DUE_TO", # (Damages)-[:DUE_TO]->(UnfairDismissal)
-    "CITES",        # (CourtCase)-[:CITES]->(LegalCitation)
-    "REFERENCES",   # (LegalCitation)-[:REFERENCES]->(LaborLaw)
     # Facts
     "HAS_AMOUNT",   # (* )-[:HAS_AMOUNT]->(MoneyAmount)
     "OCCURRED_ON",  # (* )-[:OCCURRED_ON]->(Date)

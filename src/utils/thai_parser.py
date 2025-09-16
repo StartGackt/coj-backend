@@ -1578,6 +1578,162 @@ def upsert_legal_references_to_graph(legal_info: Dict, case_id: str):
         print(f"Added legal references to case {case_id}")
 
 
+def parse_court_petition(text: str) -> Dict:
+    """Parse user request and generate formal court petition.
+    
+    Args:
+        text: User's informal request to the court
+    
+    Returns:
+        Dict with formal petition, legal assessment, and supporting details
+    """
+    s = text.strip()
+    
+    # Detect key elements in the request
+    detected_claims = []
+    legal_articles = []
+    
+    # Pattern matching for common requests
+    if re.search(r"จ่าย|ชำระ|เงิน", s):
+        detected_claims.append("การชำระเงิน")
+    
+    if re.search(r"ดอกเบี้ย", s):
+        detected_claims.append("ดอกเบี้ย")
+        legal_articles.append({
+            "article": "มาตรา 9",
+            "law": "พระราชบัญญัติคุ้มครองแรงงาน พ.ศ. ๒๕๔๑",
+            "topic": "ดอกเบี้ยและเงินเพิ่ม",
+            "rate": "ร้อยละ 15 ต่อปี"
+        })
+    
+    if re.search(r"ค่าธรรมเนียม|ค่าทนายความ", s):
+        detected_claims.append("ค่าธรรมเนียมและค่าทนายความ")
+        legal_articles.append({
+            "article": "มาตรา 8",
+            "law": "พระราชบัญญัติวิธีพิจารณาความแพ่ง",
+            "topic": "ค่าธรรมเนียมศาลและค่าทนายความ",
+            "rate": "ตามที่ศาลเห็นสมควร"
+        })
+    
+    if re.search(r"ค่าชดเชย", s):
+        detected_claims.append("ค่าชดเชย")
+        legal_articles.append({
+            "article": "มาตรา 118",
+            "law": "พระราชบัญญัติคุ้มครองแรงงาน พ.ศ. ๒๕๔๑",
+            "topic": "ค่าชดเชยการเลิกจ้าง",
+            "rate": "ตามอายุงาน"
+        })
+    
+    if re.search(r"ค่าจ้างค้างจ่าย|เงินเดือน", s):
+        detected_claims.append("ค่าจ้างค้างจ่าย")
+        legal_articles.append({
+            "article": "มาตรา 70",
+            "law": "พระราชบัญญัติคุ้มครองแรงงาน พ.ศ. ๒๕๔๑",
+            "topic": "การจ่ายค่าจ้าง",
+            "rate": "ตามสัญญาจ้าง"
+        })
+    
+    if re.search(r"ค่าเสียหาย", s):
+        detected_claims.append("ค่าเสียหาย")
+        legal_articles.append({
+            "article": "มาตรา 438",
+            "law": "ประมวลกฎหมายแพ่งและพาณิชย์",
+            "topic": "ค่าเสียหายจากการผิดสัญญา",
+            "rate": "ตามความเสียหายที่เกิดขึ้นจริง"
+        })
+    
+    # Generate formal petition
+    petition_parts = []
+    petition_parts.append("ขอให้ศาลมีคำพิพากษาให้จำเลย")
+    
+    if "การชำระเงิน" in detected_claims:
+        claims_list = []
+        if "ค่าชดเชย" in detected_claims:
+            claims_list.append("ค่าชดเชยตามกฎหมาย")
+        if "ค่าจ้างค้างจ่าย" in detected_claims:
+            claims_list.append("ค่าจ้างค้างจ่าย")
+        if "ค่าเสียหาย" in detected_claims:
+            claims_list.append("ค่าเสียหายตามสัญญา")
+        
+        if claims_list:
+            petition_parts.append(f"ชำระ{', '.join(claims_list)}")
+    
+    if "ดอกเบี้ย" in detected_claims:
+        # Use court interest rate (7.5%) instead of labor law rate (15%) for formal petition
+        petition_parts.append("พร้อมดอกเบี้ยในอัตราร้อยละ 7.5 ต่อปี นับแต่วันผิดนัด จนกว่าจะชำระเสร็จสิ้น")
+    
+    if "ค่าธรรมเนียมและค่าทนายความ" in detected_claims:
+        petition_parts.append("รวมทั้งให้จำเลยรับผิดชอบค่าธรรมเนียมและค่าทนายความ")
+    
+    formal_petition = " ".join(petition_parts)
+    
+    # Legal assessment
+    primary_law = "พระราชบัญญัติคุ้มครองแรงงาน พ.ศ. ๒๕๔๑"
+    if any("แพ่งและพาณิชย์" in art.get("law", "") for art in legal_articles):
+        secondary_laws = ["ประมวลกฎหมายแพ่งและพาณิชย์"]
+    else:
+        secondary_laws = []
+    
+    return {
+        "formal_petition": formal_petition,
+        "detected_claims": detected_claims,
+        "legal_articles": legal_articles,
+        "primary_law": primary_law,
+        "secondary_laws": secondary_laws,
+        "claim_count": len(detected_claims),
+        "article_count": len(legal_articles),
+        "assessment": f"คำขอนี้เข้าข่าย{len(detected_claims)}ประเด็นหลัก อ้างอิงกฎหมาย{len(legal_articles)}มาตรา",
+        "raw_text": s
+    }
+
+
+def format_court_petition(petition_info: Dict, case_id: str = None) -> str:
+    """Format court petition information into a readable Thai sentence."""
+    
+    if not petition_info.get("formal_petition"):
+        return "ไม่พบข้อมูลคำขอต่อศาล"
+    
+    return petition_info["formal_petition"]
+
+
+def upsert_court_petition_to_graph(petition_info: Dict, case_id: str):
+    """Add court petition information to Neo4j graph and link to court case."""
+    from ..services.neo4j_service import upsert_graph
+    from ..models.graph import SimpleNode, SimpleRel, SimpleGraphDocument
+    
+    nodes = []
+    relationships = []
+    
+    # Main petition node
+    petition_id = f"petition_{case_id}"
+    petition_node = SimpleNode(petition_id, "CourtPetition")
+    nodes.append(petition_node)
+    
+    # Link to court case
+    case_node = SimpleNode(case_id, "CourtCase")
+    relationships.append(SimpleRel(case_node, petition_node, "HAS_PETITION"))
+    
+    # Create nodes for legal articles
+    for i, article in enumerate(petition_info.get("legal_articles", [])):
+        article_id = f"article_{article['article'].replace(' ', '_')}_{case_id}"
+        article_node = SimpleNode(article_id, "LegalArticle")
+        nodes.append(article_node)
+        relationships.append(SimpleRel(petition_node, article_node, "CITES"))
+    
+    # Create claim nodes
+    for i, claim in enumerate(petition_info.get("detected_claims", [])):
+        claim_id = f"petition_claim_{i}_{case_id}"
+        claim_node = SimpleNode(claim_id, "LegalClaim")
+        nodes.append(claim_node)
+        relationships.append(SimpleRel(petition_node, claim_node, "REQUESTS"))
+    
+    # Store in Neo4j
+    if nodes or relationships:
+        doc = SimpleGraphDocument(nodes=nodes, relationships=relationships)
+        upsert_graph([doc], case_id)
+        print(f"Added court petition to case {case_id}")
+
+
 def upsert_financial_summary_to_graph(financial_info: Dict, case_id: str):
     """Add financial summary information to Neo4j graph and link to court case."""
     from ..services.neo4j_service import upsert_graph
