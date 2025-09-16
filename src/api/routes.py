@@ -426,6 +426,43 @@ def search_court_documents(
         print(f"Step 4 parsing failed: {e}")
         pass
 
+    # Optional: Step 5 support (parse termination info)
+    termination_block: Optional[Dict] = None
+    try:
+        if step == 5:
+            from ..utils.thai_parser import parse_termination_info, format_termination_summary, upsert_termination_to_graph
+            info = parse_termination_info(q)
+            
+            # Format summary
+            formatted = format_termination_summary(info, cid)
+            
+            termination_block = {
+                "parsed": info,
+                "formatted": formatted,
+                "legal_summary": info.get("legal_summary", ""),
+                "violations": info.get("violations", []),
+                "violation_count": info.get("violation_count", 0)
+            }
+            
+            # Store termination info to Neo4j graph
+            try:
+                upsert_termination_to_graph(info, cid)
+            except Exception as e:
+                print(f"Failed to store termination to graph: {e}")
+            
+            resp = {
+                "query": q,
+                "case_id": cid,
+                "results": suggestions[:5],
+                "total": len(suggestions),
+                "source": "hybrid_search",
+                "termination": termination_block,
+            }
+            return resp
+    except Exception as e:
+        print(f"Step 5 parsing failed: {e}")
+        pass
+
     # Sort and return
     suggestions.sort(key=lambda x: x.get("score", 0.0), reverse=True)
     resp = {

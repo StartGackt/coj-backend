@@ -927,6 +927,219 @@ def format_employment_summary(employment_info: Dict, case_id: str = None) -> str
     return " ".join(parts)
 
 
+def parse_termination_info(text: str) -> Dict:
+    """Parse termination information and labor law violations from Thai text.
+    
+    Args:
+        text: Input text in Thai about termination
+    
+    Returns:
+        Dict with termination details and violations
+    """
+    s = normalize_thai_digits((text or "").strip())
+    
+    # Parse termination date
+    termination_date = None
+    termination_date_iso = None
+    
+    # Pattern: "ถูกเลิกจ้าง 15 พ.ค. 68" or "เลิกจ้างวันที่ 15 พ.ค. 68"
+    date_patterns = [
+        r"(?:ถูก)?เลิกจ้าง(?:วันที่)?\s*(\d+)\s*พ\.ค\.\s*(\d+)",
+        r"(?:ถูก)?เลิกจ้าง(?:วันที่)?\s*(\d+)\s*พฤษภาคม\s*(\d+)",
+        r"(?:ถูก)?เลิกจ้าง(?:วันที่)?\s*(\d+)\s*/\s*(\d+)\s*/\s*(\d+)",
+        r"วันที่\s*(\d+)\s*พ\.ค\.\s*(\d+).*เลิกจ้าง",
+        r"วันที่\s*(\d+)\s*พฤษภาคม\s*(\d+).*เลิกจ้าง"
+    ]
+    
+    for pattern in date_patterns:
+        m_date = re.search(pattern, s)
+        if m_date:
+            day = int(m_date.group(1))
+            year = int(m_date.group(2))
+            
+            # Convert Buddhist era to Christian era if needed
+            if year < 100:  # Two digit year (68 -> 2568 -> 2025)
+                buddhist_year = year + 2500
+                christian_year = buddhist_year - 543
+            elif year > 2000 and year < 2100:  # Already Christian era (2025)
+                christian_year = year
+                buddhist_year = year + 543
+            else:  # Buddhist era (2568 -> 2025)
+                buddhist_year = year
+                christian_year = year - 543
+            
+            termination_date = f"{day} พฤษภาคม {buddhist_year}"
+            termination_date_iso = f"{christian_year}-05-{day:02d}"
+            break
+    
+    # Parse termination reason
+    termination_reason = "ไม่ระบุ"
+    reason_patterns = [
+        (r"ปรับโครงสร้าง", "ปรับโครงสร้างองค์กร"),
+        (r"ลดต้นทุน", "ลดต้นทุนการดำเนินงาน"),
+        (r"ปิดกิจการ", "ปิดกิจการ"),
+        (r"ย้ายฐานการผลิต", "ย้ายฐานการผลิต"),
+        (r"เศรษฐกิจไม่ดี", "ปัญหาทางเศรษฐกิจ"),
+        (r"ผิดร้ายแรง", "เลิกจ้างเพราะผิดร้ายแรง"),
+        (r"ลาออก", "ลาออกเอง")
+    ]
+    
+    for pattern, reason in reason_patterns:
+        if re.search(pattern, s):
+            termination_reason = reason
+            break
+    
+    # Detect violations
+    violations = []
+    
+    # Check for advance notice violation
+    no_advance_notice = False
+    advance_notice_patterns = [
+        r"ไม่แจ้งล่วงหน้า",
+        r"ไม่บอกกล่าวล่วงหน้า",
+        r"ไม่ได้แจ้งล่วงหน้า",
+        r"ไม่มีการบอกกล่าวล่วงหน้า",
+        r"มิได้มีการบอกกล่าวล่วงหน้า"
+    ]
+    
+    for pattern in advance_notice_patterns:
+        if re.search(pattern, s):
+            no_advance_notice = True
+            violations.append({
+                "type": "ไม่บอกกล่าวล่วงหน้า",
+                "description": "ไม่มีการบอกกล่าวล่วงหน้าตามมาตรา 17",
+                "legal_reference": "มาตรา 17 พระราชบัญญัติคุ้มครองแรงงาน พ.ศ. ๒๕๔๑",
+                "violation_severity": "สูง"
+            })
+            break
+    
+    # Check for severance pay violation
+    no_severance_pay = False
+    severance_patterns = [
+        r"ไม่ได้ค่าชดเชย",
+        r"ไม่จ่ายค่าชดเชย",
+        r"ไม่ได้รับค่าชดเชย",
+        r"มิได้จ่ายค่าชดเชย"
+    ]
+    
+    for pattern in severance_patterns:
+        if re.search(pattern, s):
+            no_severance_pay = True
+            violations.append({
+                "type": "ไม่จ่ายค่าชดเชย",
+                "description": "ไม่จ่ายค่าชดเชยตามมาตรา 118",
+                "legal_reference": "มาตรา 118 พระราชบัญญัติคุ้มครองแรงงาน พ.ศ. ๒๕๔๑",
+                "violation_severity": "สูงมาก"
+            })
+            break
+    
+    # Generate legal summary
+    legal_summary_parts = []
+    
+    if termination_date:
+        legal_summary_parts.append(f"เมื่อวันที่ {termination_date} จำเลยเลิกจ้างโจทก์")
+    
+    if termination_reason != "ไม่ระบุ":
+        legal_summary_parts.append(f"โดยอ้างเหตุ{termination_reason}")
+    
+    if violations:
+        violation_descriptions = []
+        for violation in violations:
+            if violation["type"] == "ไม่บอกกล่าวล่วงหน้า":
+                violation_descriptions.append("มิได้มีการบอกกล่าวล่วงหน้า")
+            elif violation["type"] == "ไม่จ่ายค่าชดเชย":
+                violation_descriptions.append("มิได้จ่ายค่าชดเชยตามกฎหมาย")
+        
+        if violation_descriptions:
+            legal_summary_parts.append(" ".join(violation_descriptions))
+    
+    legal_summary = " ".join(legal_summary_parts)
+    
+    return {
+        "termination_date": termination_date,
+        "termination_date_iso": termination_date_iso,
+        "termination_reason": termination_reason,
+        "violations": violations,
+        "no_advance_notice": no_advance_notice,
+        "no_severance_pay": no_severance_pay,
+        "legal_summary": legal_summary,
+        "violation_count": len(violations),
+        "raw_text": s
+    }
+
+
+def format_termination_summary(termination_info: Dict, case_id: str = None) -> str:
+    """Format termination information into a readable Thai sentence."""
+    
+    parts = []
+    
+    if termination_info.get("termination_date"):
+        parts.append(f"วันที่เลิกจ้าง: {termination_info['termination_date']}")
+    
+    if termination_info.get("termination_reason") and termination_info["termination_reason"] != "ไม่ระบุ":
+        parts.append(f"เหตุผล: {termination_info['termination_reason']}")
+    
+    if termination_info.get("violations"):
+        violation_list = [v["type"] for v in termination_info["violations"]]
+        parts.append(f"การละเมิด: {', '.join(violation_list)}")
+    
+    if termination_info.get("legal_summary"):
+        parts.append(f"สรุป: {termination_info['legal_summary']}")
+    
+    return " | ".join(parts)
+
+
+def upsert_termination_to_graph(termination_info: Dict, case_id: str):
+    """Add termination information to Neo4j graph and link to court case."""
+    from ..services.neo4j_service import upsert_graph
+    from ..models.graph import SimpleNode, SimpleRel, SimpleGraphDocument
+    
+    nodes = []
+    relationships = []
+    
+    # Main termination event node
+    termination_id = f"termination_event_{case_id}"
+    termination_node = SimpleNode(termination_id, "TerminationEvent")
+    nodes.append(termination_node)
+    
+    # Link to court case
+    case_node = SimpleNode(case_id, "CourtCase")
+    relationships.append(SimpleRel(case_node, termination_node, "TERMINATED_ON"))
+    
+    # Termination date node
+    if termination_info.get("termination_date_iso"):
+        date_id = f"termination_date_{termination_info['termination_date_iso']}_{case_id}"
+        date_node = SimpleNode(date_id, "Date")
+        nodes.append(date_node)
+        relationships.append(SimpleRel(termination_node, date_node, "OCCURRED_ON"))
+    
+    # Termination reason node
+    if termination_info.get("termination_reason"):
+        reason_id = f"termination_reason_{termination_info['termination_reason'].replace(' ', '_')}_{case_id}"
+        reason_node = SimpleNode(reason_id, "TerminationReason")
+        nodes.append(reason_node)
+        relationships.append(SimpleRel(termination_node, reason_node, "TERMINATED_FOR"))
+    
+    # Violation nodes
+    for i, violation in enumerate(termination_info.get("violations", [])):
+        violation_id = f"violation_{violation['type'].replace(' ', '_')}_{case_id}_{i}"
+        violation_node = SimpleNode(violation_id, "LaborViolation")
+        nodes.append(violation_node)
+        relationships.append(SimpleRel(termination_node, violation_node, "VIOLATED_BY"))
+        
+        # Legal claim node for each violation
+        claim_id = f"claim_{violation['type'].replace(' ', '_')}_{case_id}_{i}"
+        claim_node = SimpleNode(claim_id, "LegalClaim")
+        nodes.append(claim_node)
+        relationships.append(SimpleRel(violation_node, claim_node, "RESULTS_IN"))
+    
+    # Store in Neo4j
+    if nodes or relationships:
+        doc = SimpleGraphDocument(nodes=nodes, relationships=relationships)
+        upsert_graph([doc], case_id)
+        print(f"Added termination info to case {case_id}")
+
+
 def upsert_employment_to_graph(employment_info: Dict, case_id: str):
     """Add employment information to Neo4j graph and link to court case."""
     from ..services.neo4j_service import upsert_graph

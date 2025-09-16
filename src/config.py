@@ -31,7 +31,10 @@ ALLOWED_NODE_LABELS = [
     "WeekendDays",      # จำนวนวันหยุดสุดสัปดาห์
     "AdvanceNoticePay", # ค่าบอกกล่าวล่วงหน้า มาตรา 17
     "PaymentPeriod",    # งวดการจ่ายค่าจ้าง (รายวัน/รายเดือน)
-    "TerminationReason" # เหตุผลการเลิกจ้าง
+    "TerminationReason", # เหตุผลการเลิกจ้าง
+    "TerminationEvent", # เหตุการณ์การเลิกจ้าง
+    "LaborViolation",   # การละเมิดสิทธิทางแรงงาน
+    "LegalClaim",       # การเรียกร้องทางกฎหมาย
     # Facts
     "MoneyAmount",
     "Date",
@@ -82,6 +85,9 @@ ALLOWED_REL_TYPES = [
     "REQUIRES_NOTICE", # (EmploymentContract)-[:REQUIRES_NOTICE]->(AdvanceNoticePay)
     "HAS_PAYMENT_PERIOD", # (EmploymentContract)-[:HAS_PAYMENT_PERIOD]->(PaymentPeriod)
     "TERMINATED_FOR", # (EmploymentContract)-[:TERMINATED_FOR]->(TerminationReason)
+    "TERMINATED_ON", # (EmploymentContract)-[:TERMINATED_ON]->(TerminationEvent)
+    "VIOLATED_BY", # (TerminationEvent)-[:VIOLATED_BY]->(LaborViolation)
+    "RESULTS_IN", # (LaborViolation)-[:RESULTS_IN]->(LegalClaim)
     # Facts
     "HAS_AMOUNT",   # (* )-[:HAS_AMOUNT]->(MoneyAmount)
     "OCCURRED_ON",  # (* )-[:OCCURRED_ON]->(Date)
