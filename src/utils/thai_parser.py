@@ -1406,6 +1406,178 @@ def format_financial_summary(financial_info: Dict, case_id: str = None) -> str:
     return financial_info["formal_summary"]
 
 
+def parse_legal_references(text: str, employment_info: Dict = None, termination_info: Dict = None, claims_info: Dict = None, financial_info: Dict = None) -> Dict:
+    """Parse legal references and generate comprehensive legal citations based on case context.
+    
+    Args:
+        text: Input text about legal references
+        employment_info: Employment information from Step 4
+        termination_info: Termination information from Step 5
+        claims_info: Claims information from Step 6
+        financial_info: Financial information from Step 7
+    
+    Returns:
+        Dict with legal references and citations
+    """
+    s = text.strip()
+    
+    # Collect all relevant legal references based on case context
+    legal_references = []
+    
+    # Core Labor Protection Act references
+    base_references = [
+        {
+            "article": "มาตรา 17",
+            "law": "พระราชบัญญัติคุ้มครองแรงงาน พ.ศ. 2541",
+            "topic": "ค่าบอกกล่าวล่วงหน้า",
+            "description": "ว่าด้วยสิทธิการได้รับค่าบอกกล่าวล่วงหน้าเมื่อนายจ้างเลิกจ้าง",
+            "relevance": "high"
+        },
+        {
+            "article": "มาตรา 118",
+            "law": "พระราชบัญญัติคุ้มครองแรงงาน พ.ศ. 2541",
+            "topic": "ค่าชดเชย",
+            "description": "ว่าด้วยสิทธิการได้รับค่าชดเชยตามอายุงาน",
+            "relevance": "high"
+        }
+    ]
+    
+    # Add additional references based on context
+    if employment_info or financial_info:
+        base_references.append({
+            "article": "มาตรา 9",
+            "law": "พระราชบัญญัติคุ้มครองแรงงาน พ.ศ. 2541",
+            "topic": "ดอกเบี้ยและเงินเพิ่ม",
+            "description": "ว่าด้วยดอกเบี้ยและเงินเพิ่มกรณีนายจ้างผิดนัดการจ่าย",
+            "relevance": "medium"
+        })
+    
+    if termination_info and termination_info.get("violations"):
+        base_references.append({
+            "article": "มาตรา 119",
+            "law": "พระราชบัญญัติคุ้มครองแรงงาน พ.ศ. 2541",
+            "topic": "การเลิกจ้างไม่เป็นธรรม",
+            "description": "ว่าด้วยเหตุการเลิกจ้างและการคุ้มครองสิทธิลูกจ้าง",
+            "relevance": "high"
+        })
+    
+    # Detect user-specified legal topics from input
+    detected_topics = []
+    if "กฎหมายแรงงาน" in s or "แรงงาน" in s:
+        detected_topics.append("labor_law")
+    if "ค่าชดเชย" in s or "มาตรา 118" in s:
+        detected_topics.append("severance")
+    if "บอกกล่าวล่วงหน้า" in s or "มาตรา 17" in s:
+        detected_topics.append("advance_notice")
+    if "ดอกเบี้ย" in s or "มาตรา 9" in s:
+        detected_topics.append("interest")
+    
+    # Filter and prioritize references based on relevance and detected topics
+    if detected_topics:
+        # Filter based on detected topics
+        filtered_refs = []
+        for ref in base_references:
+            if (("severance" in detected_topics and "ค่าชดเชย" in ref["topic"]) or
+                ("advance_notice" in detected_topics and "บอกกล่าวล่วงหน้า" in ref["topic"]) or
+                ("interest" in detected_topics and "ดอกเบี้ย" in ref["topic"]) or
+                ("labor_law" in detected_topics)):
+                filtered_refs.append(ref)
+        legal_references = filtered_refs if filtered_refs else base_references
+    else:
+        legal_references = base_references
+    
+    # Generate formal legal citation text
+    if legal_references:
+        citation_parts = []
+        primary_law = "พระราชบัญญัติคุ้มครองแรงงาน พ.ศ. 2541"
+        
+        # Group by articles
+        articles = [ref["article"] for ref in legal_references if ref["law"] == primary_law]
+        
+        if len(articles) >= 2:
+            articles_text = " และ".join(articles)
+            citation_parts.append(f"อ้างอิงตาม{primary_law} {articles_text}")
+        elif len(articles) == 1:
+            citation_parts.append(f"อ้างอิงตาม{primary_law} {articles[0]}")
+        
+        # Add specific topics
+        topics = []
+        for ref in legal_references:
+            if ref["relevance"] == "high":
+                if "ค่าชดเชย" in ref["topic"]:
+                    topics.append("ว่าด้วยสิทธิการได้รับค่าชดเชย")
+                elif "บอกกล่าวล่วงหน้า" in ref["topic"]:
+                    topics.append("ว่าด้วยสิทธิการได้รับค่าบอกกล่าวล่วงหน้า")
+                elif "เลิกจ้างไม่เป็นธรรม" in ref["topic"]:
+                    topics.append("และการเลิกจ้างไม่เป็นธรรม")
+        
+        if topics:
+            citation_parts.append(" ".join(topics))
+        
+        formal_citation = " ".join(citation_parts)
+    else:
+        formal_citation = "อ้างอิงตามพระราชบัญญัติคุ้มครองแรงงาน พ.ศ. 2541 ว่าด้วยสิทธิแรงงาน"
+    
+    return {
+        "legal_references": legal_references,
+        "detected_topics": detected_topics,
+        "formal_citation": formal_citation,
+        "reference_count": len(legal_references),
+        "primary_law": "พระราชบัญญัติคุ้มครองแรงงาน พ.ศ. 2541",
+        "raw_text": s
+    }
+
+
+def format_legal_references(legal_info: Dict, case_id: str = None) -> str:
+    """Format legal references information into a readable Thai citation."""
+    
+    if not legal_info.get("formal_citation"):
+        return "ไม่พบการอ้างอิงกฎหมายที่เกี่ยวข้อง"
+    
+    return legal_info["formal_citation"]
+
+
+def upsert_legal_references_to_graph(legal_info: Dict, case_id: str):
+    """Add legal references information to Neo4j graph and link to court case."""
+    from ..services.neo4j_service import upsert_graph
+    from ..models.graph import SimpleNode, SimpleRel, SimpleGraphDocument
+    
+    nodes = []
+    relationships = []
+    
+    # Main legal citation node
+    citation_id = f"legal_citation_{case_id}"
+    citation_node = SimpleNode(citation_id, "LegalCitation")
+    nodes.append(citation_node)
+    
+    # Link to court case
+    case_node = SimpleNode(case_id, "CourtCase")
+    relationships.append(SimpleRel(case_node, citation_node, "CITES"))
+    
+    # Create nodes for each legal reference
+    for i, ref in enumerate(legal_info.get("legal_references", [])):
+        ref_id = f"legal_ref_{ref['article'].replace(' ', '_')}_{case_id}"
+        
+        # Create specific nodes based on topic
+        if "ค่าชดเชย" in ref["topic"]:
+            ref_node = SimpleNode(ref_id, "SeveranceLaw")
+        elif "บอกกล่าวล่วงหน้า" in ref["topic"]:
+            ref_node = SimpleNode(ref_id, "AdvanceNoticeLaw")
+        elif "ดอกเบี้ย" in ref["topic"]:
+            ref_node = SimpleNode(ref_id, "InterestLaw")
+        else:
+            ref_node = SimpleNode(ref_id, "LaborLaw")
+        
+        nodes.append(ref_node)
+        relationships.append(SimpleRel(citation_node, ref_node, "REFERENCES"))
+    
+    # Store in Neo4j
+    if nodes or relationships:
+        doc = SimpleGraphDocument(nodes=nodes, relationships=relationships)
+        upsert_graph([doc], case_id)
+        print(f"Added legal references to case {case_id}")
+
+
 def upsert_financial_summary_to_graph(financial_info: Dict, case_id: str):
     """Add financial summary information to Neo4j graph and link to court case."""
     from ..services.neo4j_service import upsert_graph

@@ -564,6 +564,60 @@ def search_court_documents(
         print(f"Step 7 parsing failed: {e}")
         pass
 
+    # Optional: Step 8 support (legal references)
+    legal_block: Optional[Dict] = None
+    try:
+        if step == 8:
+            from ..utils.thai_parser import parse_legal_references, format_legal_references, upsert_legal_references_to_graph
+            
+            # Try to get context from previous steps
+            # In a real implementation, you'd fetch this from session/database
+            employment_context = None
+            termination_context = None
+            claims_context = None
+            financial_context = None
+            
+            # Parse legal references with context
+            info = parse_legal_references(
+                q,
+                employment_info=employment_context,
+                termination_info=termination_context,
+                claims_info=claims_context,
+                financial_info=financial_context
+            )
+            
+            # Format citation
+            formatted = format_legal_references(info, cid)
+            
+            legal_block = {
+                "parsed": info,
+                "formatted": formatted,
+                "formal_citation": info.get("formal_citation", ""),
+                "legal_references": info.get("legal_references", []),
+                "detected_topics": info.get("detected_topics", []),
+                "reference_count": info.get("reference_count", 0),
+                "primary_law": info.get("primary_law", "")
+            }
+            
+            # Store legal references to Neo4j graph
+            try:
+                upsert_legal_references_to_graph(info, cid)
+            except Exception as e:
+                print(f"Failed to store legal references to graph: {e}")
+            
+            resp = {
+                "query": q,
+                "case_id": cid,
+                "results": suggestions[:5],
+                "total": len(suggestions),
+                "source": "hybrid_search",
+                "legal": legal_block,
+            }
+            return resp
+    except Exception as e:
+        print(f"Step 8 parsing failed: {e}")
+        pass
+
     # Sort and return
     suggestions.sort(key=lambda x: x.get("score", 0.0), reverse=True)
     resp = {

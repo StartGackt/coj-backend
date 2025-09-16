@@ -55,6 +55,11 @@ def setup_constraints():
         "CREATE CONSTRAINT uniq_damages IF NOT EXISTS FOR (n:Damages) REQUIRE n.id IS UNIQUE",
         "CREATE CONSTRAINT uniq_vacation_pay IF NOT EXISTS FOR (n:VacationPay) REQUIRE n.id IS UNIQUE",
         "CREATE CONSTRAINT uniq_unfair_dismissal IF NOT EXISTS FOR (n:UnfairDismissal) REQUIRE n.id IS UNIQUE",
+        "CREATE CONSTRAINT uniq_legal_citation IF NOT EXISTS FOR (n:LegalCitation) REQUIRE n.id IS UNIQUE",
+        "CREATE CONSTRAINT uniq_severance_law IF NOT EXISTS FOR (n:SeveranceLaw) REQUIRE n.id IS UNIQUE",
+        "CREATE CONSTRAINT uniq_advance_notice_law IF NOT EXISTS FOR (n:AdvanceNoticeLaw) REQUIRE n.id IS UNIQUE",
+        "CREATE CONSTRAINT uniq_interest_law IF NOT EXISTS FOR (n:InterestLaw) REQUIRE n.id IS UNIQUE",
+        "CREATE CONSTRAINT uniq_labor_law IF NOT EXISTS FOR (n:LaborLaw) REQUIRE n.id IS UNIQUE",
     ]
     
     with GraphDatabase.driver(NEO4J_URI, auth=NEO4J_AUTH) as driver:
