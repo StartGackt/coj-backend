@@ -1140,6 +1140,168 @@ def upsert_termination_to_graph(termination_info: Dict, case_id: str):
         print(f"Added termination info to case {case_id}")
 
 
+def parse_court_claims(text: str) -> Dict:
+    """Parse court claims and damages from Thai text.
+    
+    Args:
+        text: Input text in Thai about claims
+    
+    Returns:
+        Dict with court claims and formal request
+    """
+    s = text.strip()
+    
+    # Define claim types and their formal names
+    claim_types = {
+        "ค่าบอกกล่าวล่วงหน้า": {
+            "formal_name": "ค่าบอกกล่าวล่วงหน้า",
+            "legal_basis": "มาตรา 17 พระราชบัญญัติคุ้มครองแรงงาน พ.ศ. ๒๕๔๑",
+            "category": "advance_notice_pay"
+        },
+        "ค่าชดเชย": {
+            "formal_name": "ค่าชดเชยตามกฎหมาย",
+            "legal_basis": "มาตรา 118 พระราชบัญญัติคุ้มครองแรงงาน พ.ศ. ๒๕๔๑",
+            "category": "severance_pay"
+        },
+        "วันหยุดพักร้อน": {
+            "formal_name": "ค่าจ้างสำหรับวันหยุดพักผ่อนประจำปี",
+            "legal_basis": "มาตรา 30 พระราชบัญญัติคุ้มครองแรงงาน พ.ศ. ๒๕๔๑",
+            "category": "vacation_pay"
+        },
+        "ค่าเสียหายจากเลิกจ้างไม่เป็นธรรม": {
+            "formal_name": "ค่าเสียหายจากการเลิกจ้างไม่เป็นธรรม",
+            "legal_basis": "มาตรา 49 พระราชบัญญัติคุ้มครองแรงงาน พ.ศ. ๒๕๔๑",
+            "category": "unfair_dismissal_damages"
+        }
+    }
+    
+    # Additional patterns for claim detection
+    claim_patterns = {
+        "advance_notice_pay": [
+            r"ค่าบอกกล่าวล่วงหน้า",
+            r"บอกกล่าวล่วงหน้า",
+            r"ค่าแจ้งล่วงหน้า"
+        ],
+        "severance_pay": [
+            r"ค่าชดเชย",
+            r"เงินชดเชย",
+            r"ชดเชย"
+        ],
+        "vacation_pay": [
+            r"วันหยุดพักร้อน",
+            r"วันหยุดพักผ่อน",
+            r"ค่าจ้างวันหยุด",
+            r"พักผ่อนประจำปี"
+        ],
+        "unfair_dismissal_damages": [
+            r"ค่าเสียหายจากเลิกจ้างไม่เป็นธรรม",
+            r"เลิกจ้างไม่เป็นธรรม",
+            r"ค่าเสียหาย.*เลิกจ้าง",
+            r"การเลิกจ้างไม่เป็นธรรม"
+        ]
+    }
+    
+    # Detect claims from input text
+    detected_claims = []
+    
+    for category, patterns in claim_patterns.items():
+        for pattern in patterns:
+            if re.search(pattern, s, re.IGNORECASE):
+                # Find matching claim type
+                for claim_key, claim_info in claim_types.items():
+                    if claim_info["category"] == category:
+                        detected_claims.append(claim_info)
+                        break
+                break
+    
+    # Generate formal court request
+    if detected_claims:
+        claim_names = [claim["formal_name"] for claim in detected_claims]
+        
+        if len(claim_names) == 1:
+            formal_request = f"โจทก์ขอให้ศาลมีคำพิพากษาให้จำเลยชำระ {claim_names[0]}"
+        elif len(claim_names) == 2:
+            formal_request = f"โจทก์ขอให้ศาลมีคำพิพากษาให้จำเลยชำระ {claim_names[0]} และ{claim_names[1]}"
+        else:
+            # Multiple claims
+            last_claim = claim_names[-1]
+            other_claims = ", ".join(claim_names[:-1])
+            formal_request = f"โจทก์ขอให้ศาลมีคำพิพากษาให้จำเลยชำระ {other_claims} และ{last_claim}"
+    else:
+        formal_request = "โจทก์ขอให้ศาลมีคำพิพากษาตามที่เห็นสมควร"
+    
+    return {
+        "detected_claims": detected_claims,
+        "claim_count": len(detected_claims),
+        "formal_request": formal_request,
+        "raw_text": s
+    }
+
+
+def format_court_claims_summary(claims_info: Dict, case_id: str = None) -> str:
+    """Format court claims information into a readable Thai sentence."""
+    
+    if not claims_info.get("formal_request"):
+        return "ไม่พบข้อมูลการเรียกร้อง"
+    
+    return claims_info["formal_request"]
+
+
+def upsert_court_claims_to_graph(claims_info: Dict, case_id: str):
+    """Add court claims information to Neo4j graph and link to court case."""
+    from ..services.neo4j_service import upsert_graph
+    from ..models.graph import SimpleNode, SimpleRel, SimpleGraphDocument
+    
+    nodes = []
+    relationships = []
+    
+    # Main court request node
+    request_id = f"court_request_{case_id}"
+    request_node = SimpleNode(request_id, "CourtRequest")
+    nodes.append(request_node)
+    
+    # Link to court case
+    case_node = SimpleNode(case_id, "CourtCase")
+    relationships.append(SimpleRel(case_node, request_node, "REQUESTS"))
+    
+    # Create nodes for each detected claim
+    for i, claim in enumerate(claims_info.get("detected_claims", [])):
+        category = claim["category"]
+        
+        if category == "advance_notice_pay":
+            claim_id = f"advance_notice_claim_{case_id}"
+            claim_node = SimpleNode(claim_id, "AdvanceNoticePay")
+        elif category == "severance_pay":
+            claim_id = f"severance_claim_{case_id}"
+            claim_node = SimpleNode(claim_id, "SeverancePay")
+        elif category == "vacation_pay":
+            claim_id = f"vacation_pay_claim_{case_id}"
+            claim_node = SimpleNode(claim_id, "VacationPay")
+        elif category == "unfair_dismissal_damages":
+            claim_id = f"unfair_dismissal_damages_{case_id}"
+            claim_node = SimpleNode(claim_id, "Damages")
+            nodes.append(claim_node)
+            relationships.append(SimpleRel(request_node, claim_node, "CLAIMS"))
+            
+            # Create unfair dismissal node
+            dismissal_id = f"unfair_dismissal_{case_id}"
+            dismissal_node = SimpleNode(dismissal_id, "UnfairDismissal")
+            nodes.append(dismissal_node)
+            relationships.append(SimpleRel(claim_node, dismissal_node, "DUE_TO"))
+            continue
+        else:
+            continue  # Skip unknown categories
+            
+        nodes.append(claim_node)
+        relationships.append(SimpleRel(request_node, claim_node, "CLAIMS"))
+    
+    # Store in Neo4j
+    if nodes or relationships:
+        doc = SimpleGraphDocument(nodes=nodes, relationships=relationships)
+        upsert_graph([doc], case_id)
+        print(f"Added court claims to case {case_id}")
+
+
 def upsert_employment_to_graph(employment_info: Dict, case_id: str):
     """Add employment information to Neo4j graph and link to court case."""
     from ..services.neo4j_service import upsert_graph

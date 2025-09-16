@@ -35,6 +35,10 @@ ALLOWED_NODE_LABELS = [
     "TerminationEvent", # เหตุการณ์การเลิกจ้าง
     "LaborViolation",   # การละเมิดสิทธิทางแรงงาน
     "LegalClaim",       # การเรียกร้องทางกฎหมาย
+    "CourtRequest",     # คำขอต่อศาล
+    "Damages",          # ค่าเสียหาย
+    "VacationPay",      # ค่าจ้างวันหยุดพักผ่อน
+    "UnfairDismissal"   # การเลิกจ้างไม่เป็นธรรม
     # Facts
     "MoneyAmount",
     "Date",
@@ -88,6 +92,9 @@ ALLOWED_REL_TYPES = [
     "TERMINATED_ON", # (EmploymentContract)-[:TERMINATED_ON]->(TerminationEvent)
     "VIOLATED_BY", # (TerminationEvent)-[:VIOLATED_BY]->(LaborViolation)
     "RESULTS_IN", # (LaborViolation)-[:RESULTS_IN]->(LegalClaim)
+    "REQUESTS", # (CourtCase)-[:REQUESTS]->(CourtRequest)
+    "CLAIMS", # (CourtRequest)-[:CLAIMS]->(Damages|AdvanceNoticePay|SeverancePay|VacationPay)
+    "DUE_TO", # (Damages)-[:DUE_TO]->(UnfairDismissal)
     # Facts
     "HAS_AMOUNT",   # (* )-[:HAS_AMOUNT]->(MoneyAmount)
     "OCCURRED_ON",  # (* )-[:OCCURRED_ON]->(Date)

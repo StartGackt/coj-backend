@@ -463,6 +463,43 @@ def search_court_documents(
         print(f"Step 5 parsing failed: {e}")
         pass
 
+    # Optional: Step 6 support (parse court claims)
+    claims_block: Optional[Dict] = None
+    try:
+        if step == 6:
+            from ..utils.thai_parser import parse_court_claims, format_court_claims_summary, upsert_court_claims_to_graph
+            info = parse_court_claims(q)
+            
+            # Format summary
+            formatted = format_court_claims_summary(info, cid)
+            
+            claims_block = {
+                "parsed": info,
+                "formatted": formatted,
+                "formal_request": info.get("formal_request", ""),
+                "detected_claims": info.get("detected_claims", []),
+                "claim_count": info.get("claim_count", 0)
+            }
+            
+            # Store court claims to Neo4j graph
+            try:
+                upsert_court_claims_to_graph(info, cid)
+            except Exception as e:
+                print(f"Failed to store court claims to graph: {e}")
+            
+            resp = {
+                "query": q,
+                "case_id": cid,
+                "results": suggestions[:5],
+                "total": len(suggestions),
+                "source": "hybrid_search",
+                "claims": claims_block,
+            }
+            return resp
+    except Exception as e:
+        print(f"Step 6 parsing failed: {e}")
+        pass
+
     # Sort and return
     suggestions.sort(key=lambda x: x.get("score", 0.0), reverse=True)
     resp = {
