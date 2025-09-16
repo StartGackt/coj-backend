@@ -500,6 +500,70 @@ def search_court_documents(
         print(f"Step 6 parsing failed: {e}")
         pass
 
+    # Optional: Step 7 support (financial summary)
+    financial_block: Optional[Dict] = None
+    try:
+        if step == 7:
+            from ..utils.thai_parser import parse_financial_summary, format_financial_summary, upsert_financial_summary_to_graph
+            
+            # Try to get employment data from Step 4 first
+            employment_info = None
+            severance_info = None
+            advance_notice_info = None
+            
+            # Re-run Step 4 parsing to get financial data
+            try:
+                from ..utils.thai_parser import parse_employment_info, calculate_severance_pay, calculate_advance_notice_pay
+                
+                # Try to get Step 4 data from session/cache or re-parse
+                # For now, we'll assume the user has gone through Step 4
+                # In a real implementation, you might want to store this in session or database
+                
+                # Parse financial summary with available data
+                info = parse_financial_summary(
+                    q, 
+                    employment_info=employment_info,
+                    advance_notice_info=advance_notice_info,
+                    severance_info=severance_info
+                )
+                
+            except Exception as e:
+                print(f"Failed to get Step 4 data for financial summary: {e}")
+                # Parse without Step 4 data
+                info = parse_financial_summary(q)
+            
+            # Format summary
+            formatted = format_financial_summary(info, cid)
+            
+            financial_block = {
+                "parsed": info,
+                "formatted": formatted,
+                "formal_summary": info.get("formal_summary", ""),
+                "requested_amount": info.get("requested_amount"),
+                "calculated_total": info.get("calculated_total", 0),
+                "calculations": info.get("calculations", {}),
+                "has_calculations": info.get("has_calculations", False)
+            }
+            
+            # Store financial summary to Neo4j graph
+            try:
+                upsert_financial_summary_to_graph(info, cid)
+            except Exception as e:
+                print(f"Failed to store financial summary to graph: {e}")
+            
+            resp = {
+                "query": q,
+                "case_id": cid,
+                "results": suggestions[:5],
+                "total": len(suggestions),
+                "source": "hybrid_search",
+                "financial": financial_block,
+            }
+            return resp
+    except Exception as e:
+        print(f"Step 7 parsing failed: {e}")
+        pass
+
     # Sort and return
     suggestions.sort(key=lambda x: x.get("score", 0.0), reverse=True)
     resp = {
