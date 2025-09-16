@@ -17,6 +17,25 @@ def setup_constraints():
         "CREATE CONSTRAINT uniq_courtcase_caseid IF NOT EXISTS FOR (n:CourtCase) REQUIRE n.caseId IS UNIQUE",
         "CREATE CONSTRAINT uniq_group_name IF NOT EXISTS FOR (n:Group) REQUIRE n.name IS UNIQUE",
         "CREATE CONSTRAINT uniq_section_name IF NOT EXISTS FOR (n:Section) REQUIRE n.name IS UNIQUE",
+        # Expanded legal structure
+        "CREATE CONSTRAINT uniq_act_name IF NOT EXISTS FOR (n:Act) REQUIRE n.name IS UNIQUE",
+        "CREATE CONSTRAINT uniq_book_name IF NOT EXISTS FOR (n:Book) REQUIRE n.name IS UNIQUE",
+        "CREATE CONSTRAINT uniq_title_name IF NOT EXISTS FOR (n:Title) REQUIRE n.name IS UNIQUE",
+        "CREATE CONSTRAINT uniq_chapter_name IF NOT EXISTS FOR (n:Chapter) REQUIRE n.name IS UNIQUE",
+        "CREATE CONSTRAINT uniq_part_name IF NOT EXISTS FOR (n:Part) REQUIRE n.name IS UNIQUE",
+        "CREATE CONSTRAINT uniq_section_desc_name IF NOT EXISTS FOR (n:Section_desc) REQUIRE n.name IS UNIQUE",
+        # Enforcement additions
+        "CREATE CONSTRAINT uniq_paragraph_name IF NOT EXISTS FOR (n:Paragraph) REQUIRE n.name IS UNIQUE",
+        "CREATE CONSTRAINT uniq_interest_rate_name IF NOT EXISTS FOR (n:InterestRate) REQUIRE n.name IS UNIQUE",
+        "CREATE CONSTRAINT uniq_penalty_name IF NOT EXISTS FOR (n:Penalty) REQUIRE n.name IS UNIQUE",
+        "CREATE CONSTRAINT uniq_timeperiod_name IF NOT EXISTS FOR (n:TimePeriod) REQUIRE n.name IS UNIQUE",
+        "CREATE CONSTRAINT uniq_cause_name IF NOT EXISTS FOR (n:Cause) REQUIRE n.name IS UNIQUE",
+        # Addressing
+        "CREATE CONSTRAINT uniq_address_id IF NOT EXISTS FOR (n:Address) REQUIRE n.name IS UNIQUE",
+        "CREATE CONSTRAINT uniq_province_name IF NOT EXISTS FOR (n:Province) REQUIRE n.name IS UNIQUE",
+        "CREATE CONSTRAINT uniq_district_name IF NOT EXISTS FOR (n:District) REQUIRE n.name IS UNIQUE",
+        "CREATE CONSTRAINT uniq_subdistrict_name IF NOT EXISTS FOR (n:Subdistrict) REQUIRE n.name IS UNIQUE",
+        "CREATE CONSTRAINT uniq_postal_code IF NOT EXISTS FOR (n:PostalCode) REQUIRE n.code IS UNIQUE",
     ]
     
     with GraphDatabase.driver(NEO4J_URI, auth=NEO4J_AUTH) as driver:
@@ -202,7 +221,8 @@ def graph_retrieve(case_id: Optional[str] = None, limit: int = 20) -> List[dict]
     with GraphDatabase.driver(NEO4J_URI, auth=NEO4J_AUTH) as driver:
         with driver.session() as session:
             if case_id:
-                q = """
+                # 1) Original facts
+                q_facts = """
                 MATCH (c:CourtCase {caseId: $cid})
                 OPTIONAL MATCH (p:Person)-[:PARTY]->(c)
                 OPTIONAL MATCH (p)-[:HAS_ROLE]->(role:LegalRole)
@@ -215,8 +235,32 @@ def graph_retrieve(case_id: Optional[str] = None, limit: int = 20) -> List[dict]
                     sec.name AS section, desc.name AS section_desc
                 LIMIT $limit
                 """
-                res = session.run(q, cid=case_id, limit=limit)
+                facts_res = session.run(q_facts, cid=case_id, limit=limit)
+                facts = [r.data() for r in facts_res]
+
+                # 2) Plaintiff + Address (append to facts)
+                q_plaintiff = """
+                MATCH (c:CourtCase {caseId: $cid})
+                OPTIONAL MATCH (p:Person)-[:PARTY]->(c)
+                OPTIONAL MATCH (p)-[:HAS_ROLE]->(role:LegalRole)
+                OPTIONAL MATCH (p)-[:RESIDES_AT]->(addr:Address)
+                OPTIONAL MATCH (addr)-[:IN_SUBDISTRICT]->(sd:Subdistrict)
+                OPTIONAL MATCH (addr)-[:IN_DISTRICT]->(dist:District)
+                OPTIONAL MATCH (addr)-[:IN_PROVINCE]->(prov:Province)
+                OPTIONAL MATCH (addr)-[:HAS_POSTAL_CODE]->(pc:PostalCode)
+                WHERE p IS NOT NULL AND (role.value = 'Plaintiff' OR role.value IS NULL)
+                RETURN DISTINCT 
+                    p.name AS person, role.value AS role, c.caseId AS caseId,
+                    NULL AS date, NULL AS amount,
+                    NULL AS section, NULL AS section_desc,
+                    addr.name AS address, sd.name AS subdistrict, dist.name AS district, prov.name AS province, pc.code AS postal_code
+                LIMIT 1
+                """
+                pl_res = session.run(q_plaintiff, cid=case_id)
+                facts.extend([r.data() for r in pl_res])
+                return facts
             else:
+                # No case specified: keep original behavior for simplicity
                 q = """
                 MATCH (c:CourtCase)
                 OPTIONAL MATCH (p:Person)-[:PARTY]->(c)
@@ -231,4 +275,4 @@ def graph_retrieve(case_id: Optional[str] = None, limit: int = 20) -> List[dict]
                 LIMIT $limit
                 """
                 res = session.run(q, limit=limit)
-            return [r.data() for r in res]
+                return [r.data() for r in res]

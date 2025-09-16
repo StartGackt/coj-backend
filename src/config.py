@@ -10,35 +10,76 @@ load_dotenv()
 # Use bolt scheme by default for single-instance servers to avoid routing errors
 NEO4J_URI = os.getenv("NEO4J_URI", "bolt://localhost:7687")
 NEO4J_USER = os.getenv("NEO4J_USER", "neo4j")
-NEO4J_PASSWORD = os.getenv("NEO4J_PASSWORD", "neo4j")
+NEO4J_PASSWORD = os.getenv("NEO4J_PASSWORD", "12345678")
 NEO4J_DATABASE = os.getenv("NEO4J_DATABASE", "neo4j")
 NEO4J_AUTH = (NEO4J_USER, NEO4J_PASSWORD)
 
 # Ontology / Schema
 ALLOWED_NODE_LABELS = [
+    # Parties / case
     "Person",
     "CourtCase",
+    # Employment domain
     "EmploymentContract",
+    "Position",
+    # Facts
     "MoneyAmount",
     "Date",
+    # Legal meta
     "LegalRole",
     "LegalTerm",
-    "Position",
+    # Document structure (expanded to cover Thai law hierarchy)
+    "Act",          # พระราชบัญญัติ / ประมวล
+    "Book",         # ลักษณะ
+    "Title",        # บท
+    "Chapter",      # หมวด
+    "Part",         # ตอน
+    "Group",        # กลุ่ม (เดิม)
+    "Section",      # มาตรา
+    "Section_desc", # เนื้อหามาตรา
+    # Enforcements
+    "Paragraph",    # วรรคที่ x
+    "InterestRate", # ดอกเบี้ยร้อยละ x ต่อปี/เดือน
+    "Penalty",      # เงินเพิ่ม/เบี้ยปรับ
+    "TimePeriod",   # ช่วงเวลา เช่น 7 วัน
+    "Cause",        # เหตุ/เงื่อนไขการคิดดอกเบี้ย/เงินเพิ่ม
+    # Addressing
+    "Address",
+    "Province",
+    "District",
+    "Subdistrict",
+    "PostalCode",
+    # Generic
     "Entity",
-    "Group",
-    "Section",
-    "Section_desc",
 ]
 
 ALLOWED_REL_TYPES = [
+    # Case / parties
     "PARTY",        # (Person)-[:PARTY]->(CourtCase)
     "HAS_ROLE",     # (Person)-[:HAS_ROLE]->(LegalRole)
-    "EMPLOYED_BY",  # (Person)-[:EMPLOYED_BY]->(EmploymentContract|Organization|Person)
-    "HAS_AMOUNT",   # (* )-[:HAS_AMOUNT]->(MoneyAmount)
     "CLAIMS",       # (Person)-[:CLAIMS]->(CourtCase)
+    # Employment
+    "EMPLOYED_BY",  # (Person)-[:EMPLOYED_BY]->(EmploymentContract|Organization|Person)
+    # Facts
+    "HAS_AMOUNT",   # (* )-[:HAS_AMOUNT]->(MoneyAmount)
     "OCCURRED_ON",  # (* )-[:OCCURRED_ON]->(Date)
+    # Law structure hierarchy
+    "BELONGS_TO",   # (Section)->(Chapter)->(Title)->(Book)->(Act)
+    "HAS_DESC",     # (Section)-[:HAS_DESC]->(Section_desc)
+    "HAS_PARAGRAPH",# (Section)-[:HAS_PARAGRAPH]->(Paragraph)
+    "HAS_RATE",     # (Paragraph|Section)-[:HAS_RATE]->(InterestRate)
+    "HAS_PENALTY",  # (Paragraph|Section)-[:HAS_PENALTY]->(Penalty)
+    "WITHIN",       # (Penalty)-[:WITHIN]->(TimePeriod)
+    "HAS_CAUSE",    # (Paragraph|Section)-[:HAS_CAUSE]->(Cause)
+    "REFERS_TO",    # (Section)-[:REFERS_TO]->(Section)
+    # Addressing
+    "RESIDES_AT",   # (Person)-[:RESIDES_AT]->(Address)
+    "IN_PROVINCE",  # (Address|District|Subdistrict)-[:IN_PROVINCE]->(Province)
+    "IN_DISTRICT",  # (Address|Subdistrict)-[:IN_DISTRICT]->(District)
+    "IN_SUBDISTRICT",# (Address)-[:IN_SUBDISTRICT]->(Subdistrict)
+    "HAS_POSTAL_CODE", # (Address)-[:HAS_POSTAL_CODE]->(PostalCode)
+    # Backward-compatible
     "SECTION",      # (Section)-[:SECTION]->(Group)
-     
 ]
 
 # Thai months mapping

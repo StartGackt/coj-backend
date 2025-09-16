@@ -20,6 +20,8 @@ from ..services.neo4j_service import (
     graph_retrieve
 )
 from ..services.extraction import rule_based_extract, detect_case_id
+from ..utils.thai_parser import parse_person_address
+from ..models.graph import SimpleNode, SimpleRel
 from ..services.search import hybrid_search, synthesize_answer
 from ..models.graph import SimpleGraphDocument
 
@@ -189,6 +191,7 @@ def search_court_documents(
     case_id: Optional[str] = None,
     texts: Optional[List[str]] = None,
     k: int = 5,
+    step: Optional[int] = Query(None, description="Workflow step hint (e.g., 2 for plaintiff info)"),
 ):
     """Suggest court document template using hybrid KG search with fuzzy fallback"""
     cid = case_id or latest_case_id()
@@ -248,15 +251,120 @@ def search_court_documents(
         print(f"Neo4j search failed: {e}, falling back to simple search")
         return search_court_documents_simple(q, case_id, k)
 
+    # Optional: Step 2 support (parse plaintiff info using same endpoint)
+    plaintiff_block: Optional[Dict] = None
+    try:
+        if step == 2:
+            info = parse_person_address(q)
+            # Build formatted Thai sentence
+            name = (info.get("title") or "") + (info.get("full_name") or "")
+            parts: List[str] = []
+            if name.strip():
+                parts.append(f"โจทก์ชื่อ {name.strip()}")
+            age = info.get("age")
+            if age is not None:
+                parts.append(f"อายุ {age} ปี")
+            addr = []
+            if info.get("house_no"):
+                addr.append(f"อยู่บ้านเลขที่ {info['house_no']}")
+            loc_bits: List[str] = []
+            if info.get("subdistrict"):
+                loc_bits.append(f"ตำบล{info['subdistrict']}")
+            if info.get("district"):
+                loc_bits.append(f"อำเภอ{info['district']}")
+            if info.get("province"):
+                loc_bits.append(f"จังหวัด{info['province']}")
+            if info.get("postal_code"):
+                loc_bits.append(str(info["postal_code"]))
+            if loc_bits:
+                addr.append(" ".join(loc_bits))
+            if addr:
+                parts.append(" ".join(addr).strip())
+            formatted = " ".join([p for p in parts if p])
+            plaintiff_block = {"parsed": info, "formatted": formatted}
+    except Exception:
+        pass
+
     # Sort and return
     suggestions.sort(key=lambda x: x.get("score", 0.0), reverse=True)
-    return {
+    resp = {
         "query": q,
         "case_id": cid,
         "results": suggestions[:5],
         "total": len(suggestions),
-        "source": "hybrid_search"
+        "source": "hybrid_search",
     }
+    if plaintiff_block:
+        resp["plaintiff"] = plaintiff_block
+    return resp
+
+
+@router.post("/plaintiff/ingest")
+def ingest_plaintiff_info(
+    text: str = Query(..., min_length=1, description="ข้อความข้อมูลโจทก์และที่อยู่"),
+    case_id: Optional[str] = Query(None, description="ระบุ case_id ถ้าต้องการผูกเข้ากับคดีเฉพาะ")
+):
+    """Parse plaintiff person/address text and upsert person + address graph."""
+    setup_constraints()
+
+    info = parse_person_address(text)
+
+    # Build graph doc
+    nodes: List[SimpleNode] = []
+    rels: List[SimpleRel] = []
+
+    # Person
+    full_name = info.get("full_name") or "โจทก์"
+    title = info.get("title") or ""
+    age = info.get("age")
+    person = SimpleNode(f"{title}{full_name}".strip(), "Person")
+    nodes.append(person)
+    role = SimpleNode("Plaintiff", "LegalRole")
+    nodes.append(role)
+    rels.append(SimpleRel(person, role, "HAS_ROLE"))
+
+    # Address
+    addr_label = []
+    if info.get("house_no"):
+        addr_label.append(f"บ้านเลขที่ {info['house_no']}")
+    address_name = " ".join(addr_label) or "ที่อยู่"
+    address = SimpleNode(address_name, "Address")
+    nodes.append(address)
+    rels.append(SimpleRel(person, address, "RESIDES_AT"))
+
+    # Hierarchy: Subdistrict -> District -> Province
+    sd = info.get("subdistrict")
+    if sd:
+        sd_node = SimpleNode(sd, "Subdistrict")
+        nodes.append(sd_node)
+        rels.append(SimpleRel(address, sd_node, "IN_SUBDISTRICT"))
+
+    dist = info.get("district")
+    if dist:
+        dist_node = SimpleNode(dist, "District")
+        nodes.append(dist_node)
+        # link from address if no subdistrict
+        rels.append(SimpleRel(address, dist_node, "IN_DISTRICT"))
+
+    prov = info.get("province")
+    if prov:
+        prov_node = SimpleNode(prov, "Province")
+        nodes.append(prov_node)
+        rels.append(SimpleRel(address, prov_node, "IN_PROVINCE"))
+
+    # Postal code
+    pc = info.get("postal_code")
+    if pc:
+        pc_node = SimpleNode(pc, "PostalCode")
+        nodes.append(pc_node)
+        rels.append(SimpleRel(address, pc_node, "HAS_POSTAL_CODE"))
+
+    gd = SimpleGraphDocument(nodes, rels)
+    # Attach to provided case or latest
+    cid = (case_id or latest_case_id() or "PLAINTIFF-INFO").strip()
+    upsert_graph([gd], cid)
+
+    return {"case_id": cid, "parsed": info}
 
 
 @router.get("/court-documents/search-simple")
