@@ -20,7 +20,7 @@ from ..services.neo4j_service import (
     graph_retrieve
 )
 from ..services.extraction import rule_based_extract, detect_case_id
-from ..utils.thai_parser import parse_person_address
+from ..utils.thai_parser import parse_person_address, llm_normalize_plaintiff
 from ..models.graph import SimpleNode, SimpleRel
 from ..services.search import hybrid_search, synthesize_answer
 from ..models.graph import SimpleGraphDocument
@@ -255,33 +255,43 @@ def search_court_documents(
     plaintiff_block: Optional[Dict] = None
     try:
         if step == 2:
-            info = parse_person_address(q)
-            # Build formatted Thai sentence
-            name = (info.get("title") or "") + (info.get("full_name") or "")
-            parts: List[str] = []
-            if name.strip():
-                parts.append(f"โจทก์ชื่อ {name.strip()}")
-            age = info.get("age")
-            if age is not None:
-                parts.append(f"อายุ {age} ปี")
+            info = None
+            source = "rule_based"
+            try:
+                info = llm_normalize_plaintiff(q)
+                source = "llm"
+            except Exception:
+                info = parse_person_address(q)
+                source = "rule_based"
+
+            # build formatted Thai sentence
+            name = ((info.get("title") or "") + (info.get("full_name") or "")).strip()
+            parts: list[str] = []
+            if name:
+                parts.append(f"โจทก์ชื่อ {name}")
+            if info.get("age") is not None:
+                parts.append(f"อายุ {info['age']} ปี")
             addr = []
             if info.get("house_no"):
                 addr.append(f"อยู่บ้านเลขที่ {info['house_no']}")
-            loc_bits: List[str] = []
-            if info.get("subdistrict"):
-                loc_bits.append(f"ตำบล{info['subdistrict']}")
-            if info.get("district"):
-                loc_bits.append(f"อำเภอ{info['district']}")
-            if info.get("province"):
-                loc_bits.append(f"จังหวัด{info['province']}")
-            if info.get("postal_code"):
-                loc_bits.append(str(info["postal_code"]))
-            if loc_bits:
-                addr.append(" ".join(loc_bits))
-            if addr:
-                parts.append(" ".join(addr).strip())
-            formatted = " ".join([p for p in parts if p])
-            plaintiff_block = {"parsed": info, "formatted": formatted}
+            loc = []
+            if info.get("subdistrict"): loc.append(f"ตำบล{info['subdistrict']}")
+            if info.get("district"): loc.append(f"อำเภอ{info['district']}")
+            if info.get("province"): loc.append(f"จังหวัด{info['province']}")
+            if info.get("postal_code"): loc.append(str(info["postal_code"]))
+            if loc: addr.append(" ".join(loc))
+            if addr: parts.append(" ".join(addr))
+            formatted = " ".join(parts)
+
+            resp = {
+                "query": q,
+                "case_id": cid,
+                "results": suggestions[:5],
+                "total": len(suggestions),
+                "source": "hybrid_search",
+                "plaintiff": {"parsed": info, "formatted": formatted, "normalize_source": source},
+            }
+            return resp
     except Exception:
         pass
 
@@ -399,3 +409,14 @@ def search_court_documents_simple(
         "total": len(suggestions),
         "source": "simple_search"
     }
+
+
+@router.post("/setup/provinces")
+async def setup_thai_provinces():
+    """Setup Thai provinces in Neo4j graph"""
+    try:
+        from ..utils.thai_parser import upsert_thai_provinces
+        upsert_thai_provinces()
+        return {"message": "Thai provinces added successfully", "count": 77}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Setup failed: {str(e)}")

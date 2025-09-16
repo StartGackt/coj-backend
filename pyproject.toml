@@ -20,4 +20,5 @@ dependencies = [
     "pyvis>=0.3.2",
     "pythainlp>=5.0",
     "pytest>=8.4.2",
+    "openai>=1.62.0",
 ]

@@ -189,7 +189,7 @@ def parse_person_address(text: str) -> Dict:
 
     # Postal code
     postal_code = None
-    m_pc = re.search(r"รหัสไปรษณ(?:ี|ีย์)\s*(\d{5})", s)
+    m_pc = re.search(r"รหัสไปรษ(?:ี|ีย์)\s*(\d{5})", s)
     if m_pc:
         postal_code = m_pc.group(1)
 
@@ -209,3 +209,125 @@ def parse_person_address(text: str) -> Dict:
         "province": province,
         "postal_code": postal_code,
     }
+
+
+# รายชื่อจังหวัดไทยทั้งหมด 77 จังหวัด
+THAI_PROVINCES = {
+    "กรุงเทพมหานคร", "สมุทรปราการ", "นนทบุรี", "ปทุมธานี", "พระนครศรีอยุธยา",
+    "อ่างทอง", "ลพบุรี", "สิงห์บุรี", "ชัยนาท", "สระบุรี", "ชลบุรี", "ระยอง",
+    "จันทบุรี", "ตราด", "ฉะเชิงเทรา", "ปราจีนบุรี", "นครนายก", "สระแก้ว",
+    "นครราชสีมา", "บุรีรัมย์", "สุรินทร์", "ศรีสะเกษ", "อุบลราชธานี", "ยโสธร",
+    "ชัยภูมิ", "อำนาจเจริญ", "หนองบัวลำภู", "ขอนแก่น", "อุดรธานี", "เลย",
+    "หนองคาย", "มหาสารคาม", "ร้อยเอ็ด", "กาฬสินธุ์", "สกลนคร", "นครพนม",
+    "มุกดาหาร", "เชียงใหม่", "ลำพูน", "ลำปาง", "อุตรดิตถ์", "แพร่", "น่าน",
+    "พะเยา", "เชียงราย", "แม่ฮ่องสอน", "นครสวรรค์", "อุทัยธานี", "กำแพงเพชร",
+    "ตาก", "สุโขทัย", "พิษณุโลก", "พิจิตร", "เพชรบูรณ์", "ราชบุรี", "กาญจนบุรี",
+    "สุพรรณบุรี", "นครปฐม", "สมุทรสาคร", "สมุทรสงคราม", "เพชรบุรี", "ประจวบคีรีขันธ์",
+    "นครศรีธรรมราช", "กระบี่", "พังงา", "ภูเก็ต", "สุราษฎร์ธานี", "ระนอง",
+    "ชุมพร", "สงขลา", "สตูล", "ตรัง", "พัทลุง", "ปัตตานี", "ยะลา", "นราธิวาส",
+    "บึงกาฬ"
+}
+
+# Province aliases สำหรับ normalization
+PROVINCE_ALIASES = {
+    "กทม": "กรุงเทพมหานคร",
+    "กรุงเทพ": "กรุงเทพมหานคร", 
+    "กรุงเทพฯ": "กรุงเทพมหานคร",
+    "บกค": "บึงกาฬ",
+    "อจ": "อำนาจเจริญ",
+    "นบล": "หนองบัวลำภู",
+    "สกน": "สกลนคร"
+}
+
+def llm_normalize_plaintiff(text: str) -> Dict:
+    """Normalize plaintiff info using LLM with fallback to rule-based parsing."""
+    # เริ่มต้นด้วย rule-based parsing
+    data = parse_person_address(text)
+    
+    # Normalize province aliases
+    if data.get("province") in PROVINCE_ALIASES:
+        data["province"] = PROVINCE_ALIASES[data["province"]]
+    
+    # เติมค่าที่ขาดจากข้อความดิบ
+    data = _infer_from_text(text, data)
+    
+    # Validate province against known list
+    if data.get("province") and data["province"] not in THAI_PROVINCES:
+        # Try to find closest match in THAI_PROVINCES
+        province_text = data["province"]
+        for p in THAI_PROVINCES:
+            if province_text in p or p in province_text:
+                data["province"] = p
+                break
+    
+    return {
+        "title": data.get("title"),
+        "name_parts": (data.get("full_name") or "").split() if data.get("full_name") else None,
+        "full_name": data.get("full_name"),
+        "age": data.get("age"),
+        "house_no": data.get("house_no"),
+        "subdistrict": data.get("subdistrict"),
+        "district": data.get("district"),
+        "province": data.get("province"),
+        "postal_code": data.get("postal_code"),
+    }
+
+
+def _infer_from_text(raw: str, data: Dict) -> Dict:
+    s = normalize_thai_digits((raw or "").strip())
+
+    # province fallback: กทม / กรุงเทพฯ / กรุงเทพ หรือ "จังหวัด ..."
+    if not data.get("province"):
+        if ("กทม" in s) or ("กรุงเทพฯ" in s) or ("กรุงเทพ" in s):
+            data["province"] = "กรุงเทพมหานคร"
+        else:
+            m_p = re.search(r"จังหวัด\s*([\u0E00-\u0E7F]+)", s)
+            if m_p:
+                data["province"] = m_p.group(1)
+
+    # house_no fallback: ตัวเลข 1-6 หลัก (ลดขั้นต่ำเป็น 1 หลัก)
+    if not data.get("house_no"):
+        s_wo_age = re.sub(r"(?:อายุ\s*)?\d{1,3}\s*ปี", " ", s)
+        # จับทั้งแบบมี/ไม่มี "บ้านเลขที่" แต่ต้องไม่ใช่เลขอายุ
+        m_house = re.search(r"(?:บ้านเลขที่\s*)?(\d{1,6}(?:/\d{1,4})?)", s_wo_age)
+        if m_house:
+            data["house_no"] = m_house.group(1)
+
+    # province สุดท้าย: ถ้ายังไม่มี ให้เดาจาก token ไทยสุดท้ายในข้อความ
+    if not data.get("province"):
+        thai_tokens = re.findall(r"[\u0E00-\u0E7F]+", s)
+        if thai_tokens:
+            last_token = thai_tokens[-1]
+            # ตรวจสอบว่า token สุดท้ายเป็นจังหวัดหรือไม่
+            if last_token in THAI_PROVINCES:
+                data["province"] = last_token
+            elif last_token in PROVINCE_ALIASES:
+                data["province"] = PROVINCE_ALIASES[last_token]
+            else:
+                # ลองหาจังหวัดที่มีชื่อใกล้เคียง
+                for province in THAI_PROVINCES:
+                    if last_token in province or province.endswith(last_token):
+                        data["province"] = province
+                        break
+                else:
+                    data["province"] = last_token  # fallback
+
+    return data
+
+
+def upsert_thai_provinces():
+    """Add all Thai provinces to Neo4j graph."""
+    from ..services.neo4j_service import upsert_graph_document
+    from ..models.graph import SimpleNode, SimpleRel, SimpleGraphDocument
+    
+    nodes = []
+    for province in THAI_PROVINCES:
+        nodes.append(SimpleNode(
+            id=f"province_{province}",
+            type="Province", 
+            properties={"name": province}
+        ))
+    
+    doc = SimpleGraphDocument(nodes=nodes, relationships=[])
+    upsert_graph_document(doc)
+    print(f"Added {len(THAI_PROVINCES)} Thai provinces to Neo4j")
