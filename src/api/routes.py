@@ -2,7 +2,7 @@
 
 from collections import deque
 from typing import Optional, List, Dict
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Request
 from ..models.api import (
     IngestRequest, 
     AskRequest,
@@ -192,6 +192,7 @@ def search_court_documents(
     texts: Optional[List[str]] = None,
     k: int = 5,
     step: Optional[int] = Query(None, description="Workflow step hint (e.g., 2 for plaintiff info)"),
+    all_steps_data: Optional[str] = Query(None, description="JSON string of all steps data for Step 10"),
 ):
     """Suggest court document template using hybrid KG search with fuzzy fallback"""
     cid = case_id or latest_case_id()
@@ -660,6 +661,66 @@ def search_court_documents(
             return resp
     except Exception as e:
         print(f"Step 9 parsing failed: {e}")
+        pass
+
+    # Optional: Step 10 support (complete document compilation)
+    document_block: Optional[Dict] = None
+    try:
+        if step == 10:
+            from ..utils.thai_parser import parse_signature_and_compile_document, format_complete_document, upsert_complete_document_to_graph
+            
+            # Get all steps data from query parameter or use empty data
+            signature_text = q
+            steps_data = {}
+            
+            if all_steps_data:
+                try:
+                    import json
+                    steps_data = json.loads(all_steps_data)
+                    print(f"Received steps data for Step 10: {len(steps_data)} steps")
+                except Exception as e:
+                    print(f"Failed to parse all_steps_data JSON: {e}")
+                    steps_data = {}
+            else:
+                # No steps data provided, will show just signature
+                steps_data = {}
+            
+            # Parse signature and compile complete document
+            info = parse_signature_and_compile_document(signature_text, steps_data)
+            
+            # Format complete document
+            formatted = format_complete_document(info, cid)
+            
+            document_block = {
+                "parsed": info,
+                "formatted": formatted,
+                "compiled_document": info.get("compiled_document", ""),
+                "signature_info": info.get("signature_info", {}),
+                "document_sections": info.get("document_sections", []),
+                "total_sections": info.get("total_sections", 0),
+                "total_words": info.get("total_words", 0),
+                "total_lines": info.get("total_lines", 0),
+                "completion_percentage": info.get("completion_percentage", 0),
+                "document_summary": info.get("document_summary", "")
+            }
+            
+            # Store complete document to Neo4j graph
+            try:
+                upsert_complete_document_to_graph(info, cid)
+            except Exception as e:
+                print(f"Failed to store complete document to graph: {e}")
+            
+            resp = {
+                "query": signature_text,
+                "case_id": cid,
+                "results": suggestions[:5],
+                "total": len(suggestions),
+                "source": "hybrid_search",
+                "document": document_block,
+            }
+            return resp
+    except Exception as e:
+        print(f"Step 10 parsing failed: {e}")
         pass
 
     # Sort and return

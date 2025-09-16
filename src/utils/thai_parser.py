@@ -1696,6 +1696,201 @@ def format_court_petition(petition_info: Dict, case_id: str = None) -> str:
     return petition_info["formal_petition"]
 
 
+def parse_signature_and_compile_document(text: str, all_steps_data: Dict = None) -> Dict:
+    """Parse signature information and compile complete court document from all steps.
+    
+    Args:
+        text: Signature text (e.g., "ลงชื่อ นายสมชาย ใจดี")
+        all_steps_data: Dictionary containing data from all previous steps
+    
+    Returns:
+        Dict with signature info and complete compiled document
+    """
+    s = text.strip()
+    
+    # Parse signature information
+    signature_info = {}
+    
+    # Extract name from signature
+    name_patterns = [
+        r"ลงชื่อ\s+(.+)",
+        r"ผู้ฟ้อง\s+(.+)",
+        r"โจทก์\s+(.+)",
+        r"(.+)"  # fallback to entire text
+    ]
+    
+    plaintiff_name = None
+    for pattern in name_patterns:
+        match = re.search(pattern, s)
+        if match:
+            plaintiff_name = match.group(1).strip()
+            break
+    
+    signature_info = {
+        "plaintiff_name": plaintiff_name or "โจทก์",
+        "signature_text": f"ลงชื่อ ...................................... {plaintiff_name or 'โจทก์'}",
+        "raw_text": s
+    }
+    
+    # Compile complete document from all steps
+    if all_steps_data:
+        document_sections = []
+        
+        # Step 1: Document header and court info
+        if all_steps_data.get("step1"):
+            document_sections.append({
+                "title": "หัวข้อเอกสารและข้อมูลของหน่วยงานศาล",
+                "content": all_steps_data["step1"]
+            })
+        
+        # Step 2: Plaintiff information
+        if all_steps_data.get("step2_formatted"):
+            document_sections.append({
+                "title": "ข้อมูลโจทก์",
+                "content": all_steps_data["step2_formatted"]
+            })
+        
+        # Step 3: Defendant information  
+        if all_steps_data.get("step3_formatted"):
+            document_sections.append({
+                "title": "ข้อมูลจำเลย",
+                "content": all_steps_data["step3_formatted"]
+            })
+        
+        # Step 4: Employment details
+        if all_steps_data.get("step4_formatted"):
+            document_sections.append({
+                "title": "รายละเอียดการจ้างงาน",
+                "content": all_steps_data["step4_formatted"]
+            })
+        
+        # Step 5: Termination details
+        if all_steps_data.get("step5_formatted"):
+            document_sections.append({
+                "title": "เหตุแห่งการเลิกจ้าง", 
+                "content": all_steps_data["step5_formatted"]
+            })
+        
+        # Step 6: Claims and rights
+        if all_steps_data.get("step6_formatted"):
+            document_sections.append({
+                "title": "สิทธิที่ถูกละเมิดและค่าเสียหายที่เรียกร้อง",
+                "content": all_steps_data["step6_formatted"]
+            })
+        
+        # Step 7: Financial calculations
+        if all_steps_data.get("step7_formatted"):
+            document_sections.append({
+                "title": "การคำนวณเบื้องต้น",
+                "content": all_steps_data["step7_formatted"]
+            })
+        
+        # Step 8: Legal references (if available)
+        if all_steps_data.get("step8_formatted"):
+            document_sections.append({
+                "title": "การอ้างอิงตามมาตรากฎหมาย",
+                "content": all_steps_data["step8_formatted"]
+            })
+        
+        # Step 9: Court petition
+        if all_steps_data.get("step9_formatted"):
+            document_sections.append({
+                "title": "คำขอท้ายฟ้อง",
+                "content": all_steps_data["step9_formatted"]
+            })
+        
+        # Generate complete document text
+        complete_document = []
+        for section in document_sections:
+            complete_document.append(f"**{section['title']}**")
+            complete_document.append(section['content'])
+            complete_document.append("")  # Empty line
+        
+        # Add signature
+        complete_document.append("**ส่วนลงชื่อ**")
+        complete_document.append(signature_info["signature_text"])
+        
+        compiled_document = "\n".join(complete_document)
+        
+        # Document statistics
+        total_sections = len(document_sections)
+        total_words = len(compiled_document.split())
+        total_lines = len(compiled_document.split('\n'))
+        
+        return {
+            "signature_info": signature_info,
+            "document_sections": document_sections,
+            "compiled_document": compiled_document,
+            "total_sections": total_sections,
+            "total_words": total_words,
+            "total_lines": total_lines,
+            "completion_percentage": min(100, (total_sections / 9) * 100),  # 9 main sections
+            "document_summary": f"เอกสารคำฟ้องประกอบด้วย {total_sections} ส่วน รวม {total_words} คำ {total_lines} บรรทัด",
+            "raw_text": s
+        }
+    else:
+        # If no previous steps data, return just signature info
+        return {
+            "signature_info": signature_info,
+            "document_sections": [],
+            "compiled_document": signature_info["signature_text"],
+            "total_sections": 0,
+            "total_words": len(signature_info["signature_text"].split()),
+            "total_lines": 1,
+            "completion_percentage": 10,  # Just signature
+            "document_summary": "เอกสารมีเฉพาะส่วนลงชื่อ",
+            "raw_text": s
+        }
+
+
+def format_complete_document(document_info: Dict, case_id: str = None) -> str:
+    """Format complete document information into a readable format."""
+    
+    if not document_info.get("compiled_document"):
+        return "ไม่พบข้อมูลเอกสาร"
+    
+    return document_info["compiled_document"]
+
+
+def upsert_complete_document_to_graph(document_info: Dict, case_id: str):
+    """Add complete document information to Neo4j graph and link to court case."""
+    from ..services.neo4j_service import upsert_graph
+    from ..models.graph import SimpleNode, SimpleRel, SimpleGraphDocument
+    
+    nodes = []
+    relationships = []
+    
+    # Main document node
+    document_id = f"document_{case_id}"
+    document_node = SimpleNode(document_id, "CourtDocument")
+    nodes.append(document_node)
+    
+    # Link to court case
+    case_node = SimpleNode(case_id, "CourtCase")
+    relationships.append(SimpleRel(case_node, document_node, "HAS_DOCUMENT"))
+    
+    # Signature node
+    signature_info = document_info.get("signature_info", {})
+    if signature_info.get("plaintiff_name"):
+        signature_id = f"signature_{case_id}"
+        signature_node = SimpleNode(signature_id, "Signature")
+        nodes.append(signature_node)
+        relationships.append(SimpleRel(document_node, signature_node, "HAS_SIGNATURE"))
+    
+    # Document sections nodes
+    for i, section in enumerate(document_info.get("document_sections", [])):
+        section_id = f"section_{i}_{case_id}"
+        section_node = SimpleNode(section_id, "DocumentSection")
+        nodes.append(section_node)
+        relationships.append(SimpleRel(document_node, section_node, "HAS_SECTION"))
+    
+    # Store in Neo4j
+    if nodes or relationships:
+        doc = SimpleGraphDocument(nodes=nodes, relationships=relationships)
+        upsert_graph([doc], case_id)
+        print(f"Added complete document to case {case_id}")
+
+
 def upsert_court_petition_to_graph(petition_info: Dict, case_id: str):
     """Add court petition information to Neo4j graph and link to court case."""
     from ..services.neo4j_service import upsert_graph
