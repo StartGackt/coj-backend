@@ -13,6 +13,7 @@ def setup_constraints():
     """Create uniqueness constraints in Neo4j"""
     stmts = [
         "CREATE CONSTRAINT uniq_person_name IF NOT EXISTS FOR (n:Person) REQUIRE n.name IS UNIQUE",
+        "CREATE CONSTRAINT uniq_company_name IF NOT EXISTS FOR (n:Company) REQUIRE n.name IS UNIQUE",
         "CREATE CONSTRAINT uniq_legalrole_value IF NOT EXISTS FOR (n:LegalRole) REQUIRE n.value IS UNIQUE",
         "CREATE CONSTRAINT uniq_courtcase_caseid IF NOT EXISTS FOR (n:CourtCase) REQUIRE n.caseId IS UNIQUE",
         "CREATE CONSTRAINT uniq_group_name IF NOT EXISTS FOR (n:Group) REQUIRE n.name IS UNIQUE",
@@ -36,6 +37,7 @@ def setup_constraints():
         "CREATE CONSTRAINT uniq_district_name IF NOT EXISTS FOR (n:District) REQUIRE n.name IS UNIQUE",
         "CREATE CONSTRAINT uniq_subdistrict_name IF NOT EXISTS FOR (n:Subdistrict) REQUIRE n.name IS UNIQUE",
         "CREATE CONSTRAINT uniq_postal_code IF NOT EXISTS FOR (n:PostalCode) REQUIRE n.code IS UNIQUE",
+        "CREATE CONSTRAINT uniq_phone_number IF NOT EXISTS FOR (n:PhoneNumber) REQUIRE n.number IS UNIQUE",
     ]
     
     with GraphDatabase.driver(NEO4J_URI, auth=NEO4J_AUTH) as driver:

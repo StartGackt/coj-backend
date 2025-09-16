@@ -295,6 +295,74 @@ def search_court_documents(
     except Exception:
         pass
 
+    # Optional: Step 3 support (parse defendant info)
+    defendant_block: Optional[Dict] = None
+    try:
+        if step == 3:
+            from ..utils.thai_parser import parse_defendant_info
+            info = parse_defendant_info(q)
+            
+            # Build formatted sentence
+            parts: List[str] = []
+            if info.get("entity_type") == "Company":
+                if info.get("name"):
+                    parts.append(f"จำเลยคือ {info['name']}")
+            else:
+                if info.get("name"):
+                    parts.append(f"จำเลยชื่อ {info['name']}")
+            
+            # Address formatting
+            addr = []
+            if info.get("address"):
+                addr.append(f"ตั้งอยู่ที่ {info['address']}")
+            elif info.get("house_no") or info.get("street") or info.get("district") or info.get("province"):
+                addr_parts = []
+                if info.get("house_no"):
+                    addr_parts.append(info["house_no"])
+                if info.get("street"):
+                    addr_parts.append(info["street"])
+                if info.get("district"):
+                    addr_parts.append(f"อำเภอ{info['district']}")
+                if info.get("province"):
+                    addr_parts.append(f"จังหวัด{info['province']}")
+                if info.get("postal_code"):
+                    addr_parts.append(info["postal_code"])
+                if addr_parts:
+                    addr.append(f"ตั้งอยู่ที่ {' '.join(addr_parts)}")
+            
+            if addr:
+                parts.extend(addr)
+            
+            if info.get("phone"):
+                parts.append(f"โทร. {info['phone']}")
+            
+            formatted = " ".join(parts)
+            
+            defendant_block = {
+                "parsed": info,
+                "formatted": formatted
+            }
+            
+            # Store defendant info to Neo4j graph
+            try:
+                from ..utils.thai_parser import upsert_defendant_to_graph
+                upsert_defendant_to_graph(info, cid)
+            except Exception as e:
+                print(f"Failed to store defendant to graph: {e}")
+            
+            resp = {
+                "query": q,
+                "case_id": cid,
+                "results": suggestions[:5],
+                "total": len(suggestions),
+                "source": "hybrid_search",
+                "defendant": defendant_block,
+            }
+            return resp
+    except Exception as e:
+        print(f"Step 3 parsing failed: {e}")
+        pass
+
     # Sort and return
     suggestions.sort(key=lambda x: x.get("score", 0.0), reverse=True)
     resp = {

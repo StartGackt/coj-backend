@@ -315,19 +315,230 @@ def _infer_from_text(raw: str, data: Dict) -> Dict:
     return data
 
 
+def parse_defendant_info(text: str) -> Dict:
+    """Parse defendant information (person or company) from Thai text.
+    Returns dict with keys: entity_type, name, address, phone, etc.
+    """
+    s = normalize_thai_digits((text or "").strip())
+    
+    # Determine if it's a company or person
+    entity_type = "Person"  # default
+    if re.search(r"บริษัท|จำกัด|มหาชน|ห้างหุ้นส่วน|องค์การ|สำนักงาน", s):
+        entity_type = "Company"
+    
+    # Extract name
+    name = None
+    title = None
+    
+    if entity_type == "Company":
+        # Company name patterns - extract from "บริษัท" keyword
+        # First try: direct pattern "บริษัท xxx จำกัด"
+        m_company = re.search(r"(บริษัท\s+[\u0E00-\u0E7F\s]+?จำกัด)", s)
+        if m_company:
+            name = m_company.group(1).strip()
+        else:
+            # Second try: find any "บริษัท" pattern before location
+            m_company2 = re.search(r"(บริษัท\s+[^ตั้งอยู่โทร]+?)(?:\s*ตั้งอยู่|\s*อยู่|\s*โทร)", s)
+            if m_company2:
+                name = m_company2.group(1).strip()
+            else:
+                # Fallback: everything before address/phone
+                parts = re.split(r"(ตั้งอยู่|อยู่|โทร)", s)
+                if parts:
+                    # Look for company name in the first part
+                    first_part = parts[0]
+                    m_fallback = re.search(r"(บริษัท\s+[\u0E00-\u0E7F\s]+)", first_part)
+                    if m_fallback:
+                        name = m_fallback.group(1).strip()
+                    else:
+                        name = first_part.strip()
+    else:
+        # Person name (similar to plaintiff parsing)
+        m_title = re.search(r"(นาย|นางสาว|นาง|เด็กชาย|เด็กหญิง)", s)
+        title = m_title.group(1) if m_title else "นาย"
+        
+        # Extract name parts after title
+        name_zone = s
+        if m_title:
+            name_zone = s[m_title.end():].strip()
+        
+        # Split by address/phone keywords
+        name_zone = re.split(r"(อยู่|ตั้งอยู่|โทร|บ้านเลขที่)", name_zone)[0].strip()
+        
+        # Get name parts
+        name_parts = re.findall(r"[\u0E00-\u0E7F]+", name_zone)[:3]  # max 3 parts
+        if name_parts:
+            name = f"{title} {' '.join(name_parts)}"
+    
+    # Extract address components
+    address_info = _extract_address_from_text(s)
+    
+    # Extract phone number
+    phone = None
+    m_phone = re.search(r"โทร\.?\s*([\d\-\s]+)", s)
+    if m_phone:
+        phone = re.sub(r"[\s\-]", "", m_phone.group(1))  # Clean phone number
+    
+    return {
+        "entity_type": entity_type,
+        "name": name,
+        "title": title if entity_type == "Person" else None,
+        "address": address_info.get("full_address"),
+        "house_no": address_info.get("house_no"),
+        "street": address_info.get("street"),
+        "subdistrict": address_info.get("subdistrict"),
+        "district": address_info.get("district"),
+        "province": address_info.get("province"),
+        "postal_code": address_info.get("postal_code"),
+        "phone": phone,
+    }
+
+
+def _extract_address_from_text(text: str) -> Dict:
+    """Extract address components from text."""
+    s = normalize_thai_digits(text.strip())
+    
+    # House number and street
+    house_no = None
+    street = None
+    
+    # Pattern: "99/1 ถนนกาญจนวนิช"
+    m_addr = re.search(r"(\d+(?:/\d+)?)\s*(ถนน[\u0E00-\u0E7F]+)?", s)
+    if m_addr:
+        house_no = m_addr.group(1)
+        if m_addr.group(2):
+            street = m_addr.group(2)
+    
+    # District (อำเภอ/เขต)
+    district = None
+    m_district = re.search(r"(?:อำเภอ|เขต|อ\.)\s*([\u0E00-\u0E7F]+)", s)
+    if m_district:
+        district = m_district.group(1)
+    
+    # Province
+    province = None
+    m_province = re.search(r"(?:จังหวัด|จ\.)\s*([\u0E00-\u0E7F]+)", s)
+    if m_province:
+        province = m_province.group(1)
+    elif district:
+        # Try to infer province from district + context
+        thai_tokens = re.findall(r"[\u0E00-\u0E7F]+", s)
+        for i, token in enumerate(thai_tokens):
+            if token == district and i + 1 < len(thai_tokens):
+                next_token = thai_tokens[i + 1]
+                if next_token in THAI_PROVINCES:
+                    province = next_token
+                    break
+    
+    # Postal code
+    postal_code = None
+    m_postal = re.search(r"(\d{5})", s)
+    if m_postal:
+        postal_code = m_postal.group(1)
+    
+    # Construct full address
+    addr_parts = []
+    if house_no:
+        addr_parts.append(house_no)
+    if street:
+        addr_parts.append(street)
+    if district:
+        addr_parts.append(f"อำเภอ{district}")
+    if province:
+        addr_parts.append(f"จังหวัด{province}")
+    if postal_code:
+        addr_parts.append(postal_code)
+    
+    full_address = " ".join(addr_parts) if addr_parts else None
+    
+    return {
+        "full_address": full_address,
+        "house_no": house_no,
+        "street": street,
+        "district": district,
+        "province": province,
+        "postal_code": postal_code,
+    }
+
+
+def upsert_defendant_to_graph(defendant_info: Dict, case_id: str):
+    """Add defendant information to Neo4j graph and link to court case."""
+    from ..services.neo4j_service import upsert_graph
+    from ..models.graph import SimpleNode, SimpleRel, SimpleGraphDocument
+    
+    nodes = []
+    relationships = []
+    
+    # Main defendant entity
+    entity_type = defendant_info.get("entity_type", "Person")
+    entity_name = defendant_info.get("name", "")
+    
+    if not entity_name:
+        return
+    
+    # Create defendant node
+    defendant_id = f"defendant_{entity_name}_{case_id}"
+    defendant_node = SimpleNode(defendant_id, entity_type)
+    nodes.append(defendant_node)
+    
+    # Create court case node
+    case_node = SimpleNode(f"case_{case_id}", "CourtCase")
+    nodes.append(case_node)
+    
+    # Link to court case
+    relationships.append(SimpleRel(defendant_node, case_node, "DEFENDANT"))
+    
+    # Address components
+    if defendant_info.get("house_no") or defendant_info.get("street"):
+        addr_id = f"addr_{defendant_id}"
+        addr_node = SimpleNode(addr_id, "Address")
+        nodes.append(addr_node)
+        
+        # Link defendant to address
+        rel_type = "LOCATED_AT" if entity_type == "Company" else "RESIDES_AT"
+        relationships.append(SimpleRel(defendant_node, addr_node, rel_type))
+        
+        # Province/District/Postal connections
+        if defendant_info.get("province"):
+            prov_id = f"province_{defendant_info['province']}"
+            prov_node = SimpleNode(prov_id, "Province")
+            nodes.append(prov_node)
+            relationships.append(SimpleRel(addr_node, prov_node, "IN_PROVINCE"))
+        
+        if defendant_info.get("district"):
+            dist_id = f"district_{defendant_info['district']}"
+            dist_node = SimpleNode(dist_id, "District")
+            nodes.append(dist_node)
+            relationships.append(SimpleRel(addr_node, dist_node, "IN_DISTRICT"))
+        
+        if defendant_info.get("postal_code"):
+            postal_id = f"postal_{defendant_info['postal_code']}"
+            postal_node = SimpleNode(postal_id, "PostalCode")
+            nodes.append(postal_node)
+            relationships.append(SimpleRel(addr_node, postal_node, "HAS_POSTAL_CODE"))
+    
+    # Phone number
+    if defendant_info.get("phone"):
+        phone_id = f"phone_{defendant_info['phone']}"
+        phone_node = SimpleNode(phone_id, "PhoneNumber")
+        nodes.append(phone_node)
+        relationships.append(SimpleRel(defendant_node, phone_node, "HAS_PHONE"))
+    
+    # Upsert to Neo4j
+    doc = SimpleGraphDocument(nodes=nodes, relationships=relationships)
+    upsert_graph([doc], case_id)
+    print(f"Added defendant {entity_name} to case {case_id}")
+
+
 def upsert_thai_provinces():
     """Add all Thai provinces to Neo4j graph."""
-    from ..services.neo4j_service import upsert_graph_document
+    from ..services.neo4j_service import upsert_graph
     from ..models.graph import SimpleNode, SimpleRel, SimpleGraphDocument
     
     nodes = []
     for province in THAI_PROVINCES:
-        nodes.append(SimpleNode(
-            id=f"province_{province}",
-            type="Province", 
-            properties={"name": province}
-        ))
+        nodes.append(SimpleNode(f"province_{province}", "Province"))
     
     doc = SimpleGraphDocument(nodes=nodes, relationships=[])
-    upsert_graph_document(doc)
+    upsert_graph([doc], "provinces_setup")
     print(f"Added {len(THAI_PROVINCES)} Thai provinces to Neo4j")

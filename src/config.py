@@ -18,6 +18,7 @@ NEO4J_AUTH = (NEO4J_USER, NEO4J_PASSWORD)
 ALLOWED_NODE_LABELS = [
     # Parties / case
     "Person",
+    "Company",      # บริษัท/นิติบุคคล
     "CourtCase",
     # Employment domain
     "EmploymentContract",
@@ -49,13 +50,15 @@ ALLOWED_NODE_LABELS = [
     "District",
     "Subdistrict",
     "PostalCode",
+    "PhoneNumber",  # เบอร์โทรศัพท์
     # Generic
     "Entity",
 ]
 
 ALLOWED_REL_TYPES = [
     # Case / parties
-    "PARTY",        # (Person)-[:PARTY]->(CourtCase)
+    "PARTY",        # (Person|Company)-[:PARTY]->(CourtCase)
+    "DEFENDANT",    # (Person|Company)-[:DEFENDANT]->(CourtCase)
     "HAS_ROLE",     # (Person)-[:HAS_ROLE]->(LegalRole)
     "CLAIMS",       # (Person)-[:CLAIMS]->(CourtCase)
     # Employment
@@ -74,6 +77,8 @@ ALLOWED_REL_TYPES = [
     "REFERS_TO",    # (Section)-[:REFERS_TO]->(Section)
     # Addressing
     "RESIDES_AT",   # (Person)-[:RESIDES_AT]->(Address)
+    "LOCATED_AT",   # (Company)-[:LOCATED_AT]->(Address)
+    "HAS_PHONE",    # (Person|Company)-[:HAS_PHONE]->(PhoneNumber)
     "IN_PROVINCE",  # (Address|District|Subdistrict)-[:IN_PROVINCE]->(Province)
     "IN_DISTRICT",  # (Address|Subdistrict)-[:IN_DISTRICT]->(District)
     "IN_SUBDISTRICT",# (Address)-[:IN_SUBDISTRICT]->(Subdistrict)
